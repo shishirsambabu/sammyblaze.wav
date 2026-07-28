@@ -1,0 +1,92 @@
+version: 1
+project: sammyblaze.wav
+coordination:
+  default_branch: main
+  branch_pattern: "agent/{role}/{milestone}"
+  runtime_has_llm_dependency: false
+  merge_owner: lead-architect
+roles:
+  - id: program-manager
+    title: Product/program manager
+    mission: Turn the roadmap into small, ordered milestones and keep decisions visible.
+    owns: [docs/ROADMAP.md, docs/DECISIONS.md, agents/]
+    depends_on: []
+    deliverables: [milestone briefs, decision log, dependency map]
+    gate: Every active task has an owner, scope, exit criteria, and handoff.
+  - id: lead-architect
+    title: Lead systems architect
+    mission: Protect boundaries, latency, safety invariants, and integration quality.
+    owns: [AGENTS.md, CLAUDE.md, docs/SPEC.md, docs/ARCHITECTURE.md, src/handmusic/app.py]
+    depends_on: [program-manager]
+    deliverables: [architecture decisions, integration branches, contract reviews]
+    gate: No cross-layer change lands without tests and an architecture note.
+  - id: computer-vision
+    title: Computer vision engineer
+    mission: Deliver robust local hand capture and landmark observations.
+    owns: [src/handmusic/tracking/, src/handmusic/ui/overlay.py]
+    depends_on: [lead-architect]
+    deliverables: [camera adapter, MediaPipe adapter, diagnostics overlay, hardware smoke test]
+    gate: Two-hand tracking is observable and camera shutdown is clean.
+  - id: gesture-engineer
+    title: Gesture and interaction engineer
+    mission: Convert normalized landmarks into stable, expressive gesture events.
+    owns: [src/handmusic/gestures/, configs/gestures.yaml, docs/GESTURE_LANGUAGE.md]
+    depends_on: [computer-vision, lead-architect]
+    deliverables: [features, rule state machine, calibration hooks, gesture benchmarks]
+    gate: Discrete events are debounced, cooldown-protected, and neutral-rearmed.
+  - id: ml-researcher
+    title: Applied ML researcher
+    mission: Add custom models only where recorded evidence shows rules are insufficient.
+    owns: [data/, models/, src/handmusic/ml/, docs/ML_DATA_CARD.md]
+    depends_on: [gesture-engineer]
+    deliverables: [dataset protocol, session split, baseline metrics, model card]
+    gate: No model ships without a negative class, session split, and rule baseline.
+  - id: music-systems
+    title: Music systems engineer
+    mission: Turn musical intent into deterministic chords, voicings, progressions, and timing.
+    owns: [src/handmusic/music/chord_engine.py, src/handmusic/music/progression.py, configs/music.yaml]
+    depends_on: [lead-architect]
+    deliverables: [chord engine, progression model, voicing tests, music presets]
+    gate: Invalid music inputs fail clearly and output is independent of gesture geometry.
+  - id: audio-midi
+    title: Audio and MIDI engineer
+    mission: Make MIDI and standalone SoundFont output reliable and interchangeable.
+    owns: [src/handmusic/music/midi_output.py, src/handmusic/music/standalone_synth.py]
+    depends_on: [music-systems]
+    deliverables: [MIDI adapter, FluidSynth adapter, routing diagnostics, cleanup tests]
+    gate: All output paths stop notes on loss, exception, switch, and exit.
+  - id: realtime-performance
+    title: Real-time performance engineer
+    mission: Keep camera-to-sound response predictable under load.
+    owns: [src/handmusic/runtime/, docs/PERFORMANCE.md]
+    depends_on: [computer-vision, gesture-engineer, audio-midi]
+    deliverables: [latest-frame queue, timing telemetry, latency benchmark, overload policy]
+    gate: p95 latency target is measured and no unbounded queue exists.
+  - id: performer-ux
+    title: Performer UX and calibration engineer
+    mission: Make setup, calibration, routing, and performance state understandable.
+    owns: [src/handmusic/ui/, docs/UX.md]
+    depends_on: [lead-architect, gesture-engineer, audio-midi]
+    deliverables: [desktop shell, calibration flow, status overlay, accessibility pass]
+    gate: A new performer can calibrate, route, arm, play, and stop without reading source.
+  - id: qa-reliability
+    title: QA and reliability engineer
+    mission: Catch regressions in deterministic logic and hardware failure paths.
+    owns: [tests/, .github/workflows/ci.yml, docs/TEST_PLAN.md]
+    depends_on: [music-systems, gesture-engineer, audio-midi]
+    deliverables: [unit suite, property tests, hardware smoke checklist, failure injection]
+    gate: Full suite passes and note-cleanup invariants are covered.
+  - id: privacy-security
+    title: Privacy and security engineer
+    mission: Keep camera data, recordings, configuration, and releases safe by default.
+    owns: [docs/PRIVACY.md, docs/THREAT_MODEL.md, src/handmusic/common/]
+    depends_on: [lead-architect, ml-researcher]
+    deliverables: [data consent flow, retention rules, dependency review, threat model]
+    gate: No recording is persistent without explicit consent and clear retention behavior.
+  - id: release-engineering
+    title: Release and developer-experience engineer
+    mission: Turn tested source into a repeatable standalone install and support workflow.
+    owns: [.github/, pyproject.toml, packaging/, docs/RELEASE.md]
+    depends_on: [qa-reliability, performer-ux, privacy-security]
+    deliverables: [CI, packaging, installer, release checklist, diagnostics bundle]
+    gate: A clean machine can install, launch dry-run, and execute the smoke test.

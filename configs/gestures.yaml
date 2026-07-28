@@ -1,0 +1,38 @@
+version: 1
+discrete:
+  open_palm:
+    action: arm
+    hold_ms: 500
+    cooldown_ms: 700
+    confidence: 0.75
+  fist:
+    action: stop_all
+    hold_ms: 120
+    cooldown_ms: 300
+    confidence: 0.70
+  swipe_right:
+    action: next_chord
+    velocity_threshold: 0.35
+    cooldown_ms: 500
+    confidence: 0.65
+  swipe_left:
+    action: previous_chord
+    velocity_threshold: 0.35
+    cooldown_ms: 500
+    confidence: 0.65
+  pinch:
+    action: toggle_arpeggiator
+    hold_ms: 180
+    cooldown_ms: 500
+    confidence: 0.70
+continuous:
+  right_hand_y:
+    target: expression
+    minimum: 0
+    maximum: 127
+    smoothing: 0.2
+  right_hand_x:
+    target: pan
+    minimum: 0
+    maximum: 127
+    smoothing: 0.2
