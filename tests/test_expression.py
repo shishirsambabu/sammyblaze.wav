@@ -18,7 +18,7 @@ def test_only_right_hand_drives_expression_controls() -> None:
     controller = ExpressionController(smoothing=1.0)
     assert controller.controls(hand_features(handedness="left", x=0.2, y=0.2)) == ()
     assert controller.controls(hand_features(handedness="right", x=0.25, y=0.25)) == (
-        (11, 95),
+        (11, 102),
         (10, 32),
     )
 

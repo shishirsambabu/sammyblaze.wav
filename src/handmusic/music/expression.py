@@ -5,6 +5,13 @@ from dataclasses import dataclass, field
 from handmusic.common.models import GestureFeatures
 
 
+def _safe_level(normalized: float, floor: float = 0.2) -> float:
+    """Keep live hand control expressive without allowing an accidental hard mute."""
+
+    normalized = max(0.0, min(1.0, normalized))
+    return floor + (1.0 - floor) * normalized
+
+
 @dataclass(slots=True)
 class SmoothedControl:
     """Exponential smoother that returns bounded MIDI values."""
@@ -71,7 +78,7 @@ class ExpressionController:
             return ()
         expression_input = 0.5 + (self.neutral_center_y - features.center_y) * self.sensitivity
         pan_input = 0.5 + (features.center_x - self.neutral_center_x) * self.sensitivity
-        expression = self._expression.update(expression_input)
+        expression = self._expression.update(_safe_level(expression_input))
         pan = self._pan.update(pan_input)
         return ((self.expression_cc, expression), (self.pan_cc, pan))
 
@@ -90,7 +97,7 @@ class ExpressionController:
         delay_input = 0.5 + (self.neutral_depth - features.depth) * self.sensitivity
         chorus_input = abs(features.center_x - self.neutral_center_x) * 2.0 * self.sensitivity
         return (
-            (self.volume_cc, self._volume.update(volume_input)),
+            (self.volume_cc, self._volume.update(_safe_level(volume_input))),
             (self.reverb_cc, self._reverb.update(reverb_input)),
             (self.delay_cc, self._delay.update(delay_input)),
             (self.chorus_cc, self._chorus.update(chorus_input)),

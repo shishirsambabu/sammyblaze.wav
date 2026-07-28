@@ -123,7 +123,7 @@ def test_right_hand_effect_mapper_emits_standard_send_controls() -> None:
     output = MemoryMidiOutput()
     runtime, _ = default_runtime(output)
     runtime.handle_features(feature("right", 0, x=0.25, y=0.25, depth=-0.5, pinch=0.0))
-    assert ("cc", 7, 95) in output.messages
+    assert ("cc", 7, 102) in output.messages
     assert ("cc", 91, 127) in output.messages
     assert ("cc", 94, 127) in output.messages
     assert ("cc", 93, 64) in output.messages

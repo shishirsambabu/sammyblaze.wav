@@ -49,5 +49,5 @@ def test_runtime_emits_right_hand_expression_controls() -> None:
     runtime.handle_features(
         GestureFeatures("right", (False,) * 5, 1.0, 0, 0.25, 0.25, 0, 0, 0, 0.95, 0)
     )
-    assert ("cc", 11, 95) in output.messages
+    assert ("cc", 11, 102) in output.messages
     assert ("cc", 10, 32) in output.messages
