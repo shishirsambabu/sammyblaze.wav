@@ -58,12 +58,12 @@ class ScaleEngine:
 
     @property
     def notes(self) -> tuple[int, ...]:
-        values = tuple(
+        values = (
             self.root_midi + octave * 12 + interval
             for octave in range(self.octaves)
             for interval in self.spec.intervals
         )
-        return tuple(note for note in values if note <= 127)
+        return tuple(dict.fromkeys(note for note in values if note <= 127))
 
     def note_for_position(self, center_x: float) -> int:
         notes = self.notes

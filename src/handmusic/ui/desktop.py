@@ -208,13 +208,16 @@ else:
             self.status = QLabel("Ready")
             self.status.setWordWrap(True)
             layout.addWidget(self.status)
-            self.performance_state = QLabel("Mode: chord + scale | Sustain: off | Scale: Major")
+            self.performance_state = QLabel(
+                "Mode: chord + scale | Chord latch: ready | Pedal: off | Scale: Major"
+            )
             self.performance_state.setWordWrap(True)
             layout.addWidget(self.performance_state)
             self.instructions = QLabel(
-                "Left hand: open palm arms chords, swipe changes sequence, pinch changes mode, "
-                "thumb-only toggles sustain, fist stops. Right hand: horizontal position plays "
-                "the selected scale; height controls volume/expression, pinch adds reverb."
+                "Left hand: open palm latches a voiced chord, swipe changes chord, pinch changes "
+                "mode, thumb-only toggles the sustain pedal, fist stops. Right hand: horizontal "
+                "position plays stable legato scale notes; height controls dynamics, and pinch "
+                "re-articulates the note while adding reverb."
             )
             self.instructions.setWordWrap(True)
             layout.addWidget(self.instructions)

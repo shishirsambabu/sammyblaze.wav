@@ -39,15 +39,33 @@ class NoteManager:
             raise RuntimeError("note manager is closed")
         self._release_owner("chord")
 
-    def play_melody_note(self, note: int, velocity: int = 96) -> None:
+    def play_melody_note(
+        self,
+        note: int,
+        velocity: int = 96,
+        *,
+        legato: bool = True,
+        retrigger: bool = False,
+    ) -> None:
         if self._closed:
             raise RuntimeError("note manager is closed")
         note = _midi(note)
         velocity = _midi(velocity)
         if "melody" in self._owners.get(note, set()):
+            if not retrigger:
+                return
+            if "chord" in self._owners[note]:
+                self.sink.note_on(note, velocity)
+                return
+            self._release_owner("melody")
+            self._acquire(note, "melody", velocity)
             return
-        self._release_owner("melody")
-        self._acquire(note, "melody", velocity)
+        if legato:
+            self._acquire(note, "melody", velocity)
+            self._release_owner("melody", except_note=note)
+        else:
+            self._release_owner("melody")
+            self._acquire(note, "melody", velocity)
 
     def stop_melody_note(self) -> None:
         if self._closed:
@@ -93,9 +111,9 @@ class NoteManager:
         owners.add(owner)
         self.active_notes.add(note)
 
-    def _release_owner(self, owner: str) -> None:
+    def _release_owner(self, owner: str, except_note: int | None = None) -> None:
         for note, owners in tuple(self._owners.items()):
-            if owner not in owners:
+            if owner not in owners or note == except_note:
                 continue
             owners.remove(owner)
             if not owners:

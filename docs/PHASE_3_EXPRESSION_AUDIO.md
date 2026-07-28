@@ -10,9 +10,11 @@ Right-hand position now maps continuously through an exponential smoother:
 - distance from horizontal neutral -> MIDI CC 93 chorus send (`0..127`)
 
 The left hand remains responsible for progression decisions, mode changes, sustain, and chord
-voicing. The right hand plays the selected scale while it shapes expression and effects. All
-controls are emitted through the same `NoteManager` contract as MIDI notes, so a MIDI device and
-FluidSynth receive identical intent.
+voicing. Chords are latched and revoiced automatically into compact inversions. The right hand
+plays the selected scale with hysteresis-stabilized legato transitions, motion-derived velocity,
+and pinch re-articulation while it shapes expression and effects. All controls are emitted through
+the same `NoteManager` contract as MIDI notes, so a MIDI device and FluidSynth receive identical
+intent.
 
 ## MIDI mode
 

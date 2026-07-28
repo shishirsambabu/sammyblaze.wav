@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from handmusic.common.models import HandObservation
+from handmusic.music.performance import midi_note_name
 
 HAND_CONNECTIONS = (
     (0, 1),
@@ -66,6 +67,8 @@ def draw_status(
     hands: int = 0,
     mode: str = "chord + scale",
     sustain: bool = False,
+    chord_notes: tuple[int, ...] = (),
+    melody_note: int | None = None,
 ) -> Any:
     """Draw a minimal status overlay when OpenCV is available."""
     try:
@@ -76,10 +79,22 @@ def draw_status(
     cv2.putText(
         frame,
         f"{'ARMED' if armed else 'DISARMED'} | {mode} | {chord} | "
-        f"sustain {'on' if sustain else 'off'} | {gesture} | {hands} hands | {fps:.1f} FPS",
+        f"{gesture} | {hands} hands | {fps:.1f} FPS",
         (20, 32),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
+        color,
+        2,
+    )
+    latch = "ACTIVE" if chord_notes else "READY"
+    voiced = " ".join(midi_note_name(note) for note in chord_notes) or "—"
+    melody = midi_note_name(melody_note) if melody_note is not None else "—"
+    cv2.putText(
+        frame,
+        f"LATCH {latch} | pedal {'on' if sustain else 'off'} | chord {voiced} | melody {melody}",
+        (20, 60),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.62,
         color,
         2,
     )

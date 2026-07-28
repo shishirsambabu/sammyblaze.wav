@@ -4,15 +4,17 @@ The performer should be able to return to a neutral open/relaxed hand between di
 
 | Gesture | Hand | Semantics | Guard |
 |---|---|---|---|
-| Open palm | Left | Arm and play current chord | Held 500 ms |
+| Open palm | Left | Arm and latch current voiced chord | Held 500 ms |
 | Fist | Left | Stop all notes and disarm | Held 120 ms |
 | Swipe right | Left | Next progression slot | Velocity and cooldown |
 | Swipe left | Left | Previous progression slot | Velocity and cooldown |
 | Pinch | Left | Cycle performance mode | Held 180 ms |
-| Thumb only | Left | Toggle chord sustain (MIDI CC64) | Held 220 ms |
+| Thumb only | Left | Toggle independent sustain pedal (MIDI CC64) | Held 220 ms |
 | Two fingers | Left | Toggle arpeggiator flag | Held 180 ms |
-| Horizontal movement | Right | Play selected scale note and pan | Smoothed continuously |
-| Vertical movement | Right | Volume and expression | Smoothed continuously |
+| Horizontal movement | Right | Play stable legato scale note and pan | Hysteresis + smoothing |
+| Downward movement | Right | Add velocity to the next note attack | Motion bounded |
+| Vertical position | Right | Volume and expression | Smoothed continuously |
+| Pinch edge | Right | Re-articulate current note | Edge-triggered |
 | Pinch / depth | Right | Reverb, delay, and chorus sends | Smoothed continuously |
 
 ## Recognition rules

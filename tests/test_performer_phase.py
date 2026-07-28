@@ -75,15 +75,15 @@ def test_two_hand_runtime_plays_chord_scale_and_sustain() -> None:
     runtime.handle_features(feature("left", 500, fingers=(True,) * 5))
     assert runtime.armed is True
     assert output.messages[:3] == [
-        ("note_on", 60, 96),
-        ("note_on", 64, 96),
-        ("note_on", 67, 96),
+        ("note_on", 48, 92),
+        ("note_on", 52, 92),
+        ("note_on", 55, 92),
     ]
 
     runtime.handle_features(feature("right", 520, x=0.2, y=0.5))
-    assert ("note_on", 65, 100) in output.messages
+    assert ("note_on", 65, 77) in output.messages
     runtime.handle_features(feature("right", 540, x=1.0, y=0.5))
-    assert ("note_on", 84, 100) in output.messages
+    assert ("note_on", 84, 77) in output.messages
 
     runtime.handle_features(
         feature("left", 600, fingers=(True, False, False, False, False))
@@ -115,7 +115,7 @@ def test_left_pinch_cycles_runtime_mode_and_releases_disabled_voice() -> None:
     assert runtime.mode is PerformanceMode.CHORD_ONLY
     runtime.handle_features(feature("right", 800, x=0.2))
     assert runtime.last_scale_note is None
-    assert runtime.notes.active_notes == {60, 64, 67}
+    assert runtime.notes.active_notes == {48, 52, 55}
     runtime.close()
 
 

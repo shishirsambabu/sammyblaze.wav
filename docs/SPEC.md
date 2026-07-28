@@ -6,10 +6,11 @@ SammyBlaze.wav lets a performer shape harmony and expression with their hands, w
 
 ## MVP scope
 
-The MVP supports two-hand chord/scale performance, named chord progressions and scales, discrete
-gesture commands, smoothed volume/expression/effect sends, sustain, MIDI output, and a
-standalone-audio adapter boundary. It must be usable without an LLM, cloud service, or internet
-connection after installation.
+The MVP supports two-hand chord/scale performance, named chord progressions and scales, latched
+voice-led chords, stable legato melody, motion-sensitive attack, discrete gesture commands,
+smoothed volume/expression/effect sends, sustain, MIDI output, and a standalone-audio adapter
+boundary. It must be usable without an LLM, cloud service, or internet connection after
+installation.
 
 ### In scope
 
@@ -23,10 +24,12 @@ connection after installation.
 
 ### Later scope
 
-- Scheduled arpeggiator playback, richer two-hand voicing, and custom scale roots.
+- Tempo-aware rhythm, accompaniment styles, custom scale roots, and harmonic substitutions.
+- Capability-negotiated MPE and MIDI 2.0 output for per-note pitch, pressure, and timbre.
+- Phrase-aware dynamics, quantization strength, loop capture, and scene/preset morphing.
 - Custom gesture learning from session-partitioned recordings.
 - Small static classifier and then a sequence model only where rules fail.
-- Desktop UI for routing, calibration, recording, and performance presets.
+- Release-grade desktop routing, calibration, recording, and performance-preset workflows.
 
 ## Non-functional requirements
 

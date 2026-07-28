@@ -6,6 +6,10 @@ flowchart LR
   T --> F[Feature extractor]
   F --> G[Gesture state machine]
   G --> I[Musical intent runtime]
+  I --> V[Voice-leading engine]
+  I --> M[Melody performance engine]
+  V --> N[Note manager]
+  M --> N
   I --> N[Note manager]
   N --> O1[MIDI output]
   N --> O2[FluidSynth output]
@@ -27,9 +31,21 @@ flowchart LR
 
 `app.InstrumentRuntime` maps gestures to intent. It knows that “next chord” means progression navigation; it does not know how a camera landmark is represented.
 
+`music.performance` is the musicality layer:
+
+- `VoiceLeadingEngine` chooses compact left-hand inversions that minimize movement.
+- `MelodyPerformanceEngine` adds scale locking, boundary hysteresis, motion velocity, and
+  intentional re-articulation.
+- The chord latch and physical sustain pedal are independent states, allowing clean harmonic
+  changes or deliberately overlapping pedal harmony.
+
 ### Sound output
 
 `music.chord_engine` maps a chord specification to MIDI note numbers. `music.note_manager` owns active-note truth and cleanup. Output adapters implement note/control delivery and are swappable.
+
+The output contract remains MIDI-compatible today. Its next expressive extension is a
+capability-negotiated MPE/MIDI 2.0 adapter for per-note pitch, pressure, and timbre without
+coupling gesture interpretation to any one synthesizer.
 
 ## Threading model
 

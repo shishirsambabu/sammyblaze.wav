@@ -38,9 +38,9 @@ def test_runtime_swipe_changes_chord_and_retriggers_notes() -> None:
     )
     assert runtime.chord_label == "A minor"
     assert output.messages[-3:] == [
-        ("note_on", 69, 96),
-        ("note_on", 72, 96),
-        ("note_on", 76, 96),
+        ("note_on", 48, 92),
+        ("note_on", 52, 92),
+        ("note_on", 57, 92),
     ]
 
 

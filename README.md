@@ -8,15 +8,17 @@ The product is intentionally split into four replaceable layers:
 Webcam -> hand landmarks -> gesture events -> musical commands -> MIDI / standalone audio
 ```
 
-The current performer milestone is a two-hand playable instrument:
+The current performer milestone is a two-hand keyboardist engine:
 
-- left open palm held for 500 ms: arm and play the current chord
-- left swipe right / left: next / previous chord
+- left open palm held for 500 ms: arm and latch the current chord
+- left swipe right / left: next / previous chord with automatic close-position voice leading
 - left pinch: cycle chord/scale, chord-only, scale-only, and effects-only modes
-- left thumb-only pose: toggle MIDI sustain for chords
+- left thumb-only pose: toggle the MIDI sustain pedal independently of the chord latch
 - left fist or `Esc`: stop all notes immediately
-- right-hand horizontal position: play the selected scale
-- right-hand height: volume and expression; pinch/depth/position shape reverb, delay, pan, and chorus
+- right-hand horizontal position: play stable, legato notes from the selected scale
+- right-hand downward motion: add keyboard-like note attack and velocity
+- right-hand pinch: deliberately re-articulate the current note
+- right-hand height/depth/position: shape volume, expression, reverb, delay, pan, and chorus
 
 The default progression is `C major -> A minor -> F major -> G major`. The CLI and desktop UI
 also provide anthem, minor-drive, jazz ii-V-I, blues, cinematic, and neo-soul sequences, plus
@@ -72,8 +74,9 @@ Camera sessions print frame age, dropped-frame, and gesture-latency telemetry on
 
 The optional `--ui` command opens the desktop performer control surface. It provides explicit camera,
 MIDI-output, chord-sequence, and right-hand-scale selection, a null-output mode for rehearsal,
-start/stop controls, connection state, the integrated camera canvas, performer mode/sustain state,
-and live telemetry. Install the UI extra first with `python -m pip install -e ".[ui]"`.
+start/stop controls, connection state, the integrated camera canvas, latched chord/voicing/melody
+state, pedal state, and live telemetry. Install the UI extra first with
+`python -m pip install -e ".[ui]"`.
 
 For a specific playable setup:
 

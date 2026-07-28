@@ -12,9 +12,9 @@ Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/c
 
 Exit criteria: the left hand arms and navigates a selectable progression, the right hand plays a
 selectable scale, sustain and mode changes are gesture-controlled, tracking loss stops notes, and
-output routing/chord/mode state is visible. The current implementation covers the local runtime
-path, in-memory validation, and desktop controls; physical MIDI smoke testing remains
-environment-dependent.
+output routing/chord/mode state is visible. The current implementation adds latched chords,
+minimum-motion inversion selection, stable legato melody mapping, movement-sensitive velocity,
+pinch re-articulation, and desktop/overlay note feedback.
 
 ## Phase 3 — expression and standalone audio (in progress)
 

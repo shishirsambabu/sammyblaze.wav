@@ -22,6 +22,11 @@ from handmusic.music.expression import ExpressionController
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
 from handmusic.music.modes import PerformanceMode
 from handmusic.music.note_manager import NoteManager
+from handmusic.music.performance import (
+    MelodyPerformanceEngine,
+    VoiceLeadingEngine,
+    midi_note_name,
+)
 from handmusic.music.progression import Progression, progression_for, progression_names
 from handmusic.music.scale import ScaleEngine, scale_for, scale_names
 from handmusic.music.standalone_synth import FluidSynthOutput
@@ -46,8 +51,15 @@ class InstrumentRuntime:
     last_gesture: str = GestureKind.NO_GESTURE.value
     expression: ExpressionController = field(default_factory=ExpressionController)
     scale: ScaleEngine = field(default_factory=ScaleEngine)
+    voice_leading: VoiceLeadingEngine = field(default_factory=VoiceLeadingEngine)
+    melody: MelodyPerformanceEngine = field(init=False)
     mode: PerformanceMode = PerformanceMode.CHORD_SCALE
     last_scale_note: int | None = None
+    last_chord_notes: tuple[int, ...] = ()
+    tracking_loss_grace_ms: int = 1500
+
+    def __post_init__(self) -> None:
+        self.melody = MelodyPerformanceEngine(self.scale)
 
     @property
     def chord_label(self) -> str:
@@ -56,8 +68,16 @@ class InstrumentRuntime:
 
     @property
     def status_label(self) -> str:
-        sustain = "on" if self.notes.sustain_enabled else "off"
-        return f"Mode: {self.mode.value} | Sustain: {sustain} | Scale: {self.scale.spec.name}"
+        pedal = "on" if self.notes.sustain_enabled else "off"
+        latch = "active" if self.last_chord_notes else "ready"
+        chord_notes = " ".join(midi_note_name(note) for note in self.last_chord_notes) or "—"
+        melody_note = (
+            midi_note_name(self.last_scale_note) if self.last_scale_note is not None else "—"
+        )
+        return (
+            f"Mode: {self.mode.value} | Chord latch: {latch} | Pedal: {pedal} | "
+            f"Chord: {chord_notes} | Melody: {melody_note} | Scale: {self.scale.spec.name}"
+        )
 
     def handle_features(self, features: GestureFeatures) -> int:
         event_count = 0
@@ -76,19 +96,22 @@ class InstrumentRuntime:
             if event.kind is GestureKind.ARM:
                 self.armed = True
                 if self.mode.accepts_chords:
-                    self.notes.play_chord(self.progression.current_notes)
+                    self._play_current_chord()
             elif event.kind is GestureKind.STOP_ALL:
                 self.armed = False
                 self.notes.stop_all()
                 self.last_scale_note = None
+                self.last_chord_notes = ()
+                self.melody.reset()
+                self.voice_leading.reset()
             elif event.kind is GestureKind.NEXT_CHORD:
                 self.progression.next()
                 if self.armed and self.mode.accepts_chords:
-                    self.notes.play_chord(self.progression.current_notes)
+                    self._play_current_chord()
             elif event.kind is GestureKind.PREVIOUS_CHORD:
                 self.progression.previous()
                 if self.armed and self.mode.accepts_chords:
-                    self.notes.play_chord(self.progression.current_notes)
+                    self._play_current_chord()
             elif event.kind is GestureKind.TOGGLE_ARPEGGIATOR:
                 self.arpeggiator_enabled = not self.arpeggiator_enabled
             elif event.kind is GestureKind.CYCLE_MODE:
@@ -102,21 +125,33 @@ class InstrumentRuntime:
             if self.last_scale_note is not None:
                 self.notes.stop_melody_note()
                 self.last_scale_note = None
+                self.melody.reset()
             return
-        note = self.scale.note_for_position(features.center_x)
-        velocity = round(72 + max(0.0, min(1.0, 1.0 - features.center_y)) * 55)
-        self.notes.play_melody_note(note, velocity)
-        self.last_scale_note = note
+        decision = self.melody.perform(features)
+        self.notes.play_melody_note(
+            decision.note,
+            decision.velocity,
+            legato=True,
+            retrigger=decision.retrigger,
+        )
+        self.last_scale_note = decision.note
+
+    def _play_current_chord(self) -> None:
+        voiced = self.voice_leading.voice(self.progression.current_notes)
+        self.notes.play_chord(voiced, velocity=92)
+        self.last_chord_notes = voiced
 
     def _cycle_mode(self) -> None:
         self.mode = self.mode.next()
         if not self.mode.accepts_chords:
             self.notes.stop_chord()
+            self.last_chord_notes = ()
         elif self.armed:
-            self.notes.play_chord(self.progression.current_notes)
+            self._play_current_chord()
         if not self.mode.accepts_scale:
             self.notes.stop_melody_note()
             self.last_scale_note = None
+            self.melody.reset()
 
     def close(self) -> None:
         self.notes.close()
@@ -125,6 +160,9 @@ class InstrumentRuntime:
         self.armed = False
         self.notes.stop_all()
         self.last_scale_note = None
+        self.last_chord_notes = ()
+        self.melody.reset()
+        self.voice_leading.reset()
 
 
 def default_runtime(
@@ -262,7 +300,7 @@ def run_camera(
             elif (
                 runtime.armed
                 and last_observation_ms is not None
-                and timestamp_ms - last_observation_ms >= 500
+                and timestamp_ms - last_observation_ms >= runtime.tracking_loss_grace_ms
             ):
                 runtime.stop_for_tracking_loss()
             for observation in observations:
@@ -284,6 +322,8 @@ def run_camera(
                 hands=len(observations),
                 mode=runtime.mode.value,
                 sustain=runtime.notes.sustain_enabled,
+                chord_notes=runtime.last_chord_notes,
+                melody_note=runtime.last_scale_note,
             )
             if state_callback is not None and runtime.status_label != last_state_label:
                 last_state_label = runtime.status_label
