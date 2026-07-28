@@ -32,7 +32,8 @@ class MidoOutput:
             self._port = mido.open_output(port_name)
         except ModuleNotFoundError as exc:  # pragma: no cover - depends on environment
             raise RuntimeError(
-                "MIDI backend unavailable. Install the [midi-native] extra with a C++ build toolchain "
+                "MIDI backend unavailable. Install the [midi-native] extra with a C++ "
+                "build toolchain "
                 "or run camera diagnostics with --output null."
             ) from exc
 
