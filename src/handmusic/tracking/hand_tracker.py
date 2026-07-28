@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,36 @@ class TrackerConfig:
     min_detection_confidence: float = 0.7
     min_tracking_confidence: float = 0.7
     model_path: str = "models/hand_landmarker.task"
+
+
+def hand_model_candidates(model_path: str | Path) -> tuple[Path, ...]:
+    """Return model locations for source, editable, and PyInstaller launches."""
+
+    requested = Path(model_path).expanduser()
+    if requested.is_absolute():
+        return (requested,)
+    roots: list[Path] = [Path.cwd()]
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        roots.append(Path(bundle_root))
+    roots.append(Path(__file__).resolve().parents[3])
+    roots.append(Path(sys.executable).resolve().parent)
+    candidates: list[Path] = []
+    for root in roots:
+        candidate = root / requested
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return tuple(candidates)
+
+
+def resolve_hand_model_path(model_path: str | Path) -> Path:
+    """Resolve a hand model without requiring the process to start in repo root."""
+
+    candidates = hand_model_candidates(model_path)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return candidates[0]
 
 
 class MediaPipeHandTracker:
@@ -34,11 +65,14 @@ class MediaPipeHandTracker:
                 min_tracking_confidence=self.config.min_tracking_confidence,
             )
         else:
-            model_path = Path(self.config.model_path)
+            model_path = resolve_hand_model_path(self.config.model_path)
             if not model_path.is_file():
+                checked = ", ".join(
+                    str(path) for path in hand_model_candidates(self.config.model_path)
+                )
                 raise RuntimeError(
                     "MediaPipe Tasks API requires a hand_landmarker.task model. "
-                    f"Download it to {model_path} or pass --hand-model."
+                    f"Checked: {checked}. Download it or pass --hand-model with an absolute path."
                 )
             self._mode = "tasks"
             base_options = mp.tasks.BaseOptions(model_asset_path=str(model_path))

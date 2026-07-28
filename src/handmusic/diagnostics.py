@@ -6,6 +6,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from handmusic.tracking.hand_tracker import resolve_hand_model_path
+
 _DISTRIBUTIONS = {
     "sammyblaze-wav": "application",
     "numpy": "numpy",
@@ -28,7 +30,7 @@ def _installed_version(distribution: str) -> str | None:
 def collect_diagnostics(model_path: str | Path = "models/hand_landmarker.task") -> dict[str, Any]:
     """Collect support-safe runtime information without opening hardware outputs."""
 
-    model = Path(model_path).expanduser()
+    model = resolve_hand_model_path(model_path)
     try:
         resolved_model = str(model.resolve())
     except OSError:
