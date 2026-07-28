@@ -32,16 +32,27 @@ class ExpressionController:
     smoothing: float = 0.2
     expression_cc: int = 11
     pan_cc: int = 10
+    neutral_center_x: float = 0.5
+    neutral_center_y: float = 0.5
+    sensitivity: float = 1.0
     _expression: SmoothedControl = field(init=False)
     _pan: SmoothedControl = field(init=False)
 
     def __post_init__(self) -> None:
         self._expression = SmoothedControl(self.smoothing)
         self._pan = SmoothedControl(self.smoothing)
+        if not 0.0 <= self.neutral_center_x <= 1.0:
+            raise ValueError("neutral_center_x must be between 0 and 1")
+        if not 0.0 <= self.neutral_center_y <= 1.0:
+            raise ValueError("neutral_center_y must be between 0 and 1")
+        if self.sensitivity <= 0.0:
+            raise ValueError("sensitivity must be positive")
 
     def controls(self, features: GestureFeatures) -> tuple[tuple[int, int], ...]:
         if features.handedness != "right":
             return ()
-        expression = self._expression.update(1.0 - features.center_y)
-        pan = self._pan.update(features.center_x)
+        expression_input = 0.5 + (self.neutral_center_y - features.center_y) * self.sensitivity
+        pan_input = 0.5 + (features.center_x - self.neutral_center_x) * self.sensitivity
+        expression = self._expression.update(expression_input)
+        pan = self._pan.update(pan_input)
         return ((self.expression_cc, expression), (self.pan_cc, pan))

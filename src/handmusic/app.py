@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import monotonic
 
+from handmusic.calibration import CalibrationSession, PerformerPreset, PresetStore
 from handmusic.common.events import GestureKind
 from handmusic.common.models import GestureFeatures
 from handmusic.gestures.features import extract_features
-from handmusic.gestures.state_machine import GestureStateMachine
+from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
 from handmusic.music.chord_engine import ChordSpec
 from handmusic.music.expression import ExpressionController
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
@@ -65,7 +67,10 @@ class InstrumentRuntime:
         self.notes.stop_all()
 
 
-def default_runtime(output: object | None = None) -> tuple[InstrumentRuntime, object]:
+def default_runtime(
+    output: object | None = None,
+    preset: PerformerPreset | None = None,
+) -> tuple[InstrumentRuntime, object]:
     output = output or MemoryMidiOutput()
     progression = Progression(
         [
@@ -75,7 +80,65 @@ def default_runtime(output: object | None = None) -> tuple[InstrumentRuntime, ob
             ChordSpec("G", "major"),
         ]
     )
-    return InstrumentRuntime(progression, NoteManager(output), GestureStateMachine()), output
+    expression = ExpressionController(
+        smoothing=preset.expression_smoothing if preset else 0.2,
+        neutral_center_x=preset.neutral_center_x if preset else 0.5,
+        neutral_center_y=preset.neutral_center_y if preset else 0.5,
+        sensitivity=preset.sensitivity if preset else 1.0,
+    )
+    gesture_config = GestureConfig(confidence=preset.gesture_confidence) if preset else None
+    return InstrumentRuntime(
+        progression,
+        NoteManager(output),
+        GestureStateMachine(gesture_config),
+        expression=expression,
+    ), output
+
+
+def calibrate_camera(
+    output_path: str,
+    camera_index: int,
+    hand_model: str,
+    sample_target: int,
+) -> PerformerPreset:
+    try:
+        import cv2
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError("Install the [vision] extra to calibrate a camera") from exc
+
+    from handmusic.tracking.hand_tracker import TrackerConfig
+
+    tracker = MediaPipeHandTracker(TrackerConfig(model_path=hand_model))
+    session = CalibrationSession()
+    try:
+        for frame, timestamp_ms in frames(camera_index):
+            observations = tracker.process(frame, timestamp_ms)
+            for observation in observations:
+                feature = extract_features(observation)
+                if session.add(feature):
+                    break
+            cv2.putText(
+                frame,
+                f"Calibration: {session.sample_count}/{sample_target} | Esc cancels",
+                (20, 32),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (50, 220, 50),
+                2,
+            )
+            cv2.imshow("SammyBlaze.wav calibration", frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                raise RuntimeError("calibration cancelled")
+            if session.sample_count >= sample_target:
+                break
+    finally:
+        tracker.close()
+        cv2.destroyAllWindows()
+    preset_name = Path(output_path).stem or "performer"
+    preset = session.finalize(preset_name, camera_index=camera_index)
+    PresetStore.save(output_path, preset)
+    print(f"Saved calibration preset to {output_path}")
+    return preset
 
 
 def run_camera(
@@ -140,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run", action="store_true", help="start without camera or external output"
     )
-    parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--camera", type=int, default=None)
     parser.add_argument("--output", choices=("midi", "standalone", "null"), default="midi")
     parser.add_argument("--midi-port", default=None, help="MIDI output port name")
     parser.add_argument("--soundfont", default=None, help="SoundFont path for standalone output")
@@ -155,23 +218,58 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="exit after this many frames (useful for a hardware smoke test)",
     )
+    parser.add_argument("--preset", default=None, help="load a performer preset JSON")
+    parser.add_argument(
+        "--calibrate",
+        default=None,
+        metavar="PATH",
+        help="collect camera samples and save a performer preset JSON",
+    )
+    parser.add_argument(
+        "--calibration-samples",
+        type=int,
+        default=60,
+        help="number of confident samples required for calibration",
+    )
     args = parser.parse_args(argv)
+    preset = PresetStore.load(args.preset) if args.preset else None
+    camera_index = (
+        args.camera if args.camera is not None else (preset.camera_index if preset else 0)
+    )
+    if args.calibrate:
+        if args.dry_run:
+            parser.error("--calibrate cannot be combined with --dry-run")
+        if args.calibration_samples <= 0:
+            parser.error("--calibration-samples must be positive")
+        calibrate_camera(
+            args.calibrate,
+            camera_index,
+            args.hand_model,
+            args.calibration_samples,
+        )
+        return 0
+    midi_port = (
+        args.midi_port if args.midi_port is not None else (preset.midi_port if preset else None)
+    )
+    soundfont = (
+        args.soundfont if args.soundfont is not None else (preset.soundfont if preset else None)
+    )
     if args.dry_run or args.output == "null":
         output = MemoryMidiOutput()
     elif args.output == "midi":
-        output = MidoOutput(args.midi_port)
+        output = MidoOutput(midi_port)
     else:
-        if not args.soundfont:
+        if not soundfont:
             parser.error("--soundfont is required with --output standalone")
-        output = FluidSynthOutput(args.soundfont)
-    runtime, output = default_runtime(output)
+        output = FluidSynthOutput(soundfont)
+    runtime, output = default_runtime(output, preset)
     try:
         if args.dry_run:
             print("SammyBlaze.wav dry-run ready: C major -> A minor -> F major -> G major")
             return 0
         run_camera(
             runtime,
-            args.camera,
+            camera_index,
             max_frames=args.max_frames,
             hand_model=args.hand_model,
         )

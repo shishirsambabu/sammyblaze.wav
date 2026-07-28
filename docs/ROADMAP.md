@@ -16,9 +16,9 @@ Exit criteria: open palm arms, swipes navigate `C-Am-F-G`, fist/`Esc` stop, trac
 
 Exit criteria: vertical/horizontal movement controls smoothed bounded CC values, and a SoundFont adapter plays without a DAW. The current implementation covers expression mapping and adapter hardening; physical FluidSynth verification remains environment-dependent.
 
-## Phase 4 — calibration and presets
+## Phase 4 — calibration and presets (in progress)
 
-Exit criteria: per-user neutral pose, camera orientation, sensitivity, and routing can be saved as a versioned preset.
+Exit criteria: per-user neutral pose, camera orientation, sensitivity, and routing can be saved as a versioned preset. The current implementation covers median-based sample calibration, atomic JSON persistence, preset loading, and runtime application.
 
 ## Phase 5 — data and custom ML
 

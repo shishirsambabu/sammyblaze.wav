@@ -24,6 +24,7 @@ The default progression is `C major -> A minor -> F major -> G major`.
 - `docs/ARCHITECTURE.md`: runtime boundaries, latency budget, and failure handling
 - `docs/GESTURE_LANGUAGE.md`: performer-facing gesture grammar
 - `docs/ROADMAP.md`: staged delivery plan with exit criteria
+- `docs/PHASE_4_CALIBRATION.md`: calibration and preset workflow
 - `agents/registry.yaml`: AI/ML team roster, ownership, dependencies, and gates
 - `agents/`: role-specific operating prompts for parallel subagents
 - `src/handmusic/`: deterministic core and optional hardware adapters
