@@ -5,7 +5,7 @@ from threading import Event
 from typing import Any
 
 from handmusic.app import default_runtime, run_camera
-from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
+from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput, PluginBridgeOutput
 from handmusic.music.progression import progression_names
 from handmusic.music.scale import scale_names
 from handmusic.telemetry import PerformanceTelemetry, TelemetrySnapshot
@@ -61,6 +61,8 @@ else:
         camera_health = Signal(str)
         midi_health = Signal(str)
         performance_state = Signal(str)
+        expression_updated = Signal(object)
+        transport_updated = Signal(object)
 
         def __init__(
             self,
@@ -77,6 +79,7 @@ else:
             self.progression_name = progression_name
             self.scale_name = scale_name
             self.stop_event = Event()
+            self.runtime: Any | None = None
 
         def request_stop(self) -> None:
             self.stop_event.set()
@@ -91,6 +94,36 @@ else:
         def _publish_state(self, state: str) -> None:
             self.performance_state.emit(state)
 
+        def _publish_expression(self, state: object) -> None:
+            as_dict = getattr(state, "as_dict", None)
+            self.expression_updated.emit(as_dict() if as_dict is not None else {})
+
+        def _publish_transport(self, snapshot: object) -> None:
+            as_dict = getattr(snapshot, "as_dict", None)
+            self.transport_updated.emit(as_dict() if as_dict is not None else {})
+
+        def toggle_recording(self) -> None:
+            if self.runtime is not None:
+                self._publish_transport(self.runtime.toggle_recording())
+
+        def toggle_playback(self) -> None:
+            if self.runtime is not None:
+                self._publish_transport(self.runtime.toggle_playback())
+
+        def clear_loop(self) -> None:
+            if self.runtime is not None:
+                self._publish_transport(self.runtime.clear_loop())
+
+        def toggle_sustain(self) -> None:
+            if self.runtime is not None:
+                self.runtime.notes.set_sustain(not self.runtime.notes.sustain_enabled)
+                self._publish_state(self.runtime.status_label)
+
+        def panic(self) -> None:
+            if self.runtime is not None:
+                self.runtime.stop_for_tracking_loss()
+                self._publish_state(self.runtime.status_label)
+
         def run(self) -> None:  # pragma: no cover - requires a desktop and camera
             runtime = None
             telemetry = PerformanceTelemetry()
@@ -100,6 +133,10 @@ else:
                     self.state_changed.emit("Connecting MIDI...")
                     output: Any = MidoOutput(self.midi_port)
                     self.midi_health.emit(f"MIDI: connected ({self.midi_port or 'default'})")
+                elif self.output_mode == "plugin":
+                    self.state_changed.emit("Connecting plug-in bridge...")
+                    output = PluginBridgeOutput()
+                    self.midi_health.emit("VST3 bridge: localhost:18736")
                 else:
                     self.state_changed.emit("Starting camera...")
                     output = MemoryMidiOutput()
@@ -109,6 +146,7 @@ else:
                     progression_name=self.progression_name,
                     scale_name=self.scale_name,
                 )
+                self.runtime = runtime
                 self.state_changed.emit("Running")
                 self.camera_health.emit("Camera: opening...")
                 run_camera(
@@ -119,6 +157,8 @@ else:
                     telemetry_callback=self._publish_telemetry,
                     frame_callback=self._publish_frame,
                     state_callback=self._publish_state,
+                    expression_callback=self._publish_expression,
+                    transport_callback=self._publish_transport,
                     display=False,
                 )
             except Exception as exc:
@@ -128,6 +168,7 @@ else:
             finally:
                 if runtime is not None:
                     runtime.close()
+                self.runtime = None
                 self.telemetry_updated.emit(telemetry.snapshot().as_dict())
                 if error_message is None:
                     self.camera_health.emit("Camera: stopped")
@@ -145,7 +186,7 @@ else:
         ) -> None:
             super().__init__()
             self.setWindowTitle("SammyBlaze.wav Performer")
-            self.resize(700, 680)
+            self.resize(1180, 780)
             self.worker: SessionWorker | None = None
             self._preferred_midi_port = midi_port
             self._preferred_progression = progression_name
@@ -163,8 +204,9 @@ else:
 
             self.output = QComboBox()
             self.output.addItem("MIDI", "midi")
+            self.output.addItem("FL Studio / VST3 bridge", "plugin")
             self.output.addItem("Null output", "null")
-            requested_mode = output_mode if output_mode in ("midi", "null") else "midi"
+            requested_mode = output_mode if output_mode in ("midi", "plugin", "null") else "midi"
             self.output.setCurrentIndex(self.output.findData(requested_mode))
             form.addRow("Output", self.output)
 
@@ -182,7 +224,7 @@ else:
             scale_index = self.scale.findData(self._preferred_scale)
             if scale_index >= 0:
                 self.scale.setCurrentIndex(scale_index)
-            form.addRow("Right-hand scale", self.scale)
+            form.addRow("Starting lead mode", self.scale)
 
             self.midi_port = QComboBox()
             form.addRow("MIDI output", self.midi_port)
@@ -192,11 +234,17 @@ else:
             self.refresh_button.clicked.connect(self.refresh_ports)
             layout.addWidget(self.refresh_button)
 
+            from handmusic.ui.expression_playground import ExpressionPlayground
+
+            visual_row = QHBoxLayout()
             self.video = QLabel("Camera preview idle")
             self.video.setMinimumSize(480, 270)
             self.video.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.video.setStyleSheet("background-color: #12151c; color: #aab4c3;")
-            layout.addWidget(self.video)
+            visual_row.addWidget(self.video, 3)
+            self.expression_playground = ExpressionPlayground()
+            visual_row.addWidget(self.expression_playground, 2)
+            layout.addLayout(visual_row)
 
             health = QHBoxLayout()
             self.camera_health = QLabel("Camera: idle")
@@ -214,16 +262,41 @@ else:
             self.performance_state.setWordWrap(True)
             layout.addWidget(self.performance_state)
             self.instructions = QLabel(
-                "Left hand: open palm latches a voiced chord, swipe changes chord, pinch changes "
-                "mode, thumb-only toggles the sustain pedal, fist stops. Right hand: horizontal "
-                "position plays stable legato scale notes; height controls dynamics, and pinch "
-                "re-articulates the note while adding reverb."
+                "Left hand chord shapes: index=I, two=ii, three=iii, four=IV, open=V, "
+                "shaka=vi, L-shape=vii. Hold a shape steadily; fist is panic. Left pinch cycles "
+                "the chord-aware lead mode. Right X plays scale degrees, movement adds vibrato, "
+                "Y shapes dynamics, Z shapes expression/timbre, and right pinch re-articulates."
             )
             self.instructions.setWordWrap(True)
             layout.addWidget(self.instructions)
             self.telemetry = QLabel("No performance telemetry yet")
             self.telemetry.setWordWrap(True)
             layout.addWidget(self.telemetry)
+
+            transport = QHBoxLayout()
+            self.record_button = QPushButton("Record loop")
+            self.record_button.clicked.connect(self.toggle_recording)
+            self.record_button.setEnabled(False)
+            transport.addWidget(self.record_button)
+            self.play_button = QPushButton("Play loop")
+            self.play_button.clicked.connect(self.toggle_playback)
+            self.play_button.setEnabled(False)
+            transport.addWidget(self.play_button)
+            self.clear_button = QPushButton("Clear loop")
+            self.clear_button.clicked.connect(self.clear_loop)
+            self.clear_button.setEnabled(False)
+            transport.addWidget(self.clear_button)
+            self.pedal_button = QPushButton("Sustain pedal")
+            self.pedal_button.clicked.connect(self.toggle_sustain)
+            self.pedal_button.setEnabled(False)
+            transport.addWidget(self.pedal_button)
+            self.panic_button = QPushButton("PANIC")
+            self.panic_button.clicked.connect(self.panic)
+            self.panic_button.setEnabled(False)
+            transport.addWidget(self.panic_button)
+            layout.addLayout(transport)
+            self.transport_state = QLabel("Loop: empty")
+            layout.addWidget(self.transport_state)
 
             buttons = QHBoxLayout()
             self.start_button = QPushButton("Start performer")
@@ -264,6 +337,14 @@ else:
             self.refresh_button.setEnabled(enabled)
             self.start_button.setEnabled(enabled)
             self.stop_button.setEnabled(not enabled)
+            for button in (
+                self.record_button,
+                self.play_button,
+                self.clear_button,
+                self.pedal_button,
+                self.panic_button,
+            ):
+                button.setEnabled(not enabled)
             self._update_port_enabled()
 
         def start_session(self) -> None:
@@ -283,6 +364,8 @@ else:
             self.worker.camera_health.connect(self.camera_health.setText)
             self.worker.midi_health.connect(self.midi_health.setText)
             self.worker.performance_state.connect(self.performance_state.setText)
+            self.worker.expression_updated.connect(self.expression_playground.update_state)
+            self.worker.transport_updated.connect(self.update_transport)
             self.worker.finished.connect(lambda: self._set_controls_enabled(True))
             self._set_controls_enabled(False)
             self.status.setText("Starting...")
@@ -292,6 +375,39 @@ else:
             if self.worker is not None and self.worker.isRunning():
                 self.status.setText("Stopping...")
                 self.worker.request_stop()
+
+        def toggle_recording(self) -> None:
+            if self.worker is not None:
+                self.worker.toggle_recording()
+
+        def toggle_playback(self) -> None:
+            if self.worker is not None:
+                self.worker.toggle_playback()
+
+        def clear_loop(self) -> None:
+            if self.worker is not None:
+                self.worker.clear_loop()
+
+        def toggle_sustain(self) -> None:
+            if self.worker is not None:
+                self.worker.toggle_sustain()
+
+        def panic(self) -> None:
+            if self.worker is not None:
+                self.worker.panic()
+
+        def update_transport(self, payload: object) -> None:
+            state = payload if isinstance(payload, dict) else {}
+            recording = bool(state.get("recording", False))
+            playing = bool(state.get("playing", False))
+            events = int(state.get("event_count", 0))
+            length_ms = int(state.get("loop_length_ms", 0))
+            self.record_button.setText("Stop recording" if recording else "Record loop")
+            self.play_button.setText("Stop loop" if playing else "Play loop")
+            self.transport_state.setText(
+                f"Loop: {'recording' if recording else 'playing' if playing else 'ready'} | "
+                f"{events} events | {length_ms / 1000.0:.2f} seconds"
+            )
 
         def update_frame(self, payload: object) -> None:
             try:

@@ -38,9 +38,9 @@ def test_runtime_swipe_changes_chord_and_retriggers_notes() -> None:
     )
     assert runtime.chord_label == "A minor"
     assert output.messages[-3:] == [
-        ("note_on", 48, 92),
-        ("note_on", 52, 92),
         ("note_on", 57, 92),
+        ("note_on", 60, 92),
+        ("note_on", 64, 92),
     ]
 
 
@@ -49,5 +49,6 @@ def test_runtime_emits_right_hand_expression_controls() -> None:
     runtime.handle_features(
         GestureFeatures("right", (False,) * 5, 1.0, 0, 0.25, 0.25, 0, 0, 0, 0.95, 0)
     )
-    assert ("cc", 11, 102) in output.messages
-    assert ("cc", 10, 32) in output.messages
+    assert ("cc", 11, 94) in output.messages
+    assert ("cc", 1, 0) in output.messages
+    assert ("cc", 74, 64) in output.messages

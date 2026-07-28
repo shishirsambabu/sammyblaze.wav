@@ -15,3 +15,27 @@ The first gesture engine is deterministic and debuggable. Custom ML is gated on 
 ## ADR-004: one owner for active notes
 
 `NoteManager` is the only component allowed to decide which notes are active. This makes emergency stop, tracking loss, output switching, and exception cleanup testable and idempotent.
+
+## ADR-005: native plug-in, Python companion
+
+The DAW audio processor is C++ and never embeds Python, MediaPipe, or the camera stack. The
+Python companion owns computer vision, gesture interpretation, UI, and calibration. This keeps
+the DAW audio callback deterministic and lets either side evolve behind a versioned bridge.
+
+## ADR-006: Steinberg SDK directly for the first VST3
+
+The first native target uses Steinberg's MIT-licensed VST3 SDK directly. JUCE remains a valid
+future cross-format option, but adopting it requires an explicit AGPL/commercial licensing
+decision. Product delivery must not silently inherit that unresolved choice.
+
+## ADR-007: lock-free boundary around local bridge I/O
+
+The v1 companion bridge uses fixed-size localhost packets. Socket work runs on a background
+thread and feeds a bounded SPSC queue; the plug-in audio thread performs no socket calls, locks,
+allocation, logging, camera work, or Python calls.
+
+## ADR-008: separate live and loop note ownership
+
+`LoopTransport` reference-counts ownership conceptually between live and loop sources. A loop
+note-off only reaches the sink when the performer is not also holding that note, preventing
+audible note theft during overdub-like performance.

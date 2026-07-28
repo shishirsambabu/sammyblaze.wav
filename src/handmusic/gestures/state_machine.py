@@ -5,6 +5,20 @@ from dataclasses import dataclass
 from handmusic.common.events import GestureEvent, GestureKind
 from handmusic.common.models import GestureFeatures
 
+FingerPose = tuple[bool, bool, bool, bool, bool]
+
+# Finger order is index, middle, ring, pinky, thumb. Fist and pinch are
+# deliberately reserved for panic and scale-mode commands.
+CHORD_POSES: dict[FingerPose, int] = {
+    (True, False, False, False, False): 0,  # index: I
+    (True, True, False, False, False): 1,  # index + middle: ii
+    (True, True, True, False, False): 2,  # three fingers: iii
+    (True, True, True, True, False): 3,  # four fingers: IV
+    (True, True, True, True, True): 4,  # open palm: V
+    (False, False, False, True, True): 5,  # shaka: vi
+    (True, False, False, False, True): 6,  # wide L: vii
+}
+
 
 @dataclass(frozen=True, slots=True)
 class GestureConfig:
@@ -14,6 +28,9 @@ class GestureConfig:
     pinch_hold_ms: int = 180
     sustain_hold_ms: int = 220
     mode_hold_ms: int = 180
+    chord_pose_hold_ms: int = 180
+    scale_mode_hold_ms: int = 400
+    chord_pose_velocity_max: float = 0.25
     swipe_velocity_threshold: float = 0.35
     cooldown_ms: int = 500
     neutral_pinch_distance: float = 0.9
@@ -27,6 +44,7 @@ class GestureStateMachine:
         self._candidate: dict[str, tuple[str, int]] = {}
         self._emitted: set[tuple[str, str]] = set()
         self._cooldown_until: dict[str, int] = {}
+        self._active_chord_pose: dict[str, int] = {}
 
     def _stable(self, hand: str, label: str, timestamp_ms: int, hold_ms: int) -> bool:
         existing = self._candidate.get(hand)
@@ -35,8 +53,19 @@ class GestureStateMachine:
             return hold_ms == 0
         return timestamp_ms - existing[1] >= hold_ms
 
-    def _event(self, kind: GestureKind, features: GestureFeatures) -> GestureEvent:
-        return GestureEvent(kind, features.handedness, features.confidence, features.timestamp_ms)
+    def _event(
+        self,
+        kind: GestureKind,
+        features: GestureFeatures,
+        value: int | str | None = None,
+    ) -> GestureEvent:
+        return GestureEvent(
+            kind,
+            features.handedness,
+            features.confidence,
+            features.timestamp_ms,
+            value,
+        )
 
     def process(self, features: GestureFeatures) -> list[GestureEvent]:
         if features.confidence < self.config.confidence:
@@ -46,12 +75,10 @@ class GestureStateMachine:
             hand = "unknown"
         now = features.timestamp_ms
         events: list[GestureEvent] = []
-        open_palm = sum(features.fingers_open) >= 4
         fist = sum(features.fingers_open) == 0
         pinch = features.pinch_distance <= 0.45
-        thumb_only = features.fingers_open == (True, False, False, False, False)
-        two_finger = features.fingers_open == (False, True, True, False, False)
-        neutral = not open_palm and not fist and not pinch and not thumb_only and not two_finger
+        chord_index = CHORD_POSES.get(features.fingers_open)
+        neutral = not fist and not pinch and chord_index is None
 
         # Re-arm only after the pose has been released. Fist is an emergency
         # command and must remain available even during another gesture's cooldown.
@@ -68,32 +95,28 @@ class GestureStateMachine:
                 self._cooldown_until[hand] = now + self.config.cooldown_ms
                 events.append(self._event(kind, features))
 
-        # Motion commands take precedence over an open-palm pose. A performer
-        # naturally swipes with an open hand, so static-pose detection must not
-        # swallow the movement event.
-        if (
-            not fist
-            and not pinch
-            and abs(features.velocity_x) >= self.config.swipe_velocity_threshold
-        ):
-            self._candidate.pop(hand, None)
-            emit_once(
-                "swipe_right" if features.velocity_x > 0 else "swipe_left",
-                GestureKind.NEXT_CHORD if features.velocity_x > 0 else GestureKind.PREVIOUS_CHORD,
-                0,
-            )
-            return events
-
-        if open_palm:
-            emit_once("open_palm", GestureKind.ARM, self.config.open_palm_hold_ms)
-        elif fist:
+        if fist:
+            self._active_chord_pose.pop(hand, None)
             emit_once("fist", GestureKind.STOP_ALL, self.config.fist_hold_ms)
         elif pinch:
-            emit_once("pinch", GestureKind.CYCLE_MODE, self.config.mode_hold_ms)
-        elif thumb_only:
-            emit_once("thumb_only", GestureKind.TOGGLE_SUSTAIN, self.config.sustain_hold_ms)
-        elif two_finger:
-            emit_once("two_finger", GestureKind.TOGGLE_ARPEGGIATOR, self.config.pinch_hold_ms)
+            self._active_chord_pose.pop(hand, None)
+            emit_once(
+                "scale_mode",
+                GestureKind.CYCLE_SCALE_MODE,
+                self.config.scale_mode_hold_ms,
+            )
+        elif (
+            chord_index is not None
+            and abs(features.velocity_x) <= self.config.chord_pose_velocity_max
+            and abs(features.velocity_y) <= self.config.chord_pose_velocity_max
+        ):
+            label = f"chord_pose_{chord_index}"
+            if (
+                self._active_chord_pose.get(hand) != chord_index
+                and self._stable(hand, label, now, self.config.chord_pose_hold_ms)
+            ):
+                self._active_chord_pose[hand] = chord_index
+                events.append(self._event(GestureKind.SELECT_CHORD, features, chord_index))
         else:
             self._candidate.pop(hand, None)
             if features.velocity_x >= self.config.swipe_velocity_threshold:

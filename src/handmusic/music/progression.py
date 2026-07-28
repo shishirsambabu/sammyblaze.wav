@@ -52,6 +52,72 @@ PROGRESSIONS: dict[str, tuple[ChordSpec, ...]] = {
     ),
 }
 
+POSE_CHORD_BANKS: dict[str, tuple[ChordSpec, ...]] = {
+    "pop": (
+        ChordSpec("C", "major7"),
+        ChordSpec("D", "minor7"),
+        ChordSpec("E", "minor7"),
+        ChordSpec("F", "major7"),
+        ChordSpec("G", "dominant7"),
+        ChordSpec("A", "minor7"),
+        ChordSpec("B", "half_diminished"),
+    ),
+    "anthem": (
+        ChordSpec("C", "major"),
+        ChordSpec("D", "minor"),
+        ChordSpec("E", "minor"),
+        ChordSpec("F", "major"),
+        ChordSpec("G", "major"),
+        ChordSpec("A", "minor"),
+        ChordSpec("B", "diminished"),
+    ),
+    "minor_drive": (
+        ChordSpec("A", "minor7"),
+        ChordSpec("B", "half_diminished"),
+        ChordSpec("C", "major7"),
+        ChordSpec("D", "minor7"),
+        ChordSpec("E", "minor7"),
+        ChordSpec("F", "major7"),
+        ChordSpec("G", "dominant7"),
+    ),
+    "jazz_ii_v_i": (
+        ChordSpec("C", "major7"),
+        ChordSpec("D", "minor7"),
+        ChordSpec("E", "minor7"),
+        ChordSpec("F", "major7"),
+        ChordSpec("G", "dominant7"),
+        ChordSpec("A", "minor7"),
+        ChordSpec("B", "half_diminished"),
+    ),
+    "blues": (
+        ChordSpec("C", "dominant7"),
+        ChordSpec("Eb", "dominant7"),
+        ChordSpec("F", "dominant7"),
+        ChordSpec("Gb", "dominant7"),
+        ChordSpec("G", "dominant7"),
+        ChordSpec("Bb", "dominant7"),
+        ChordSpec("B", "diminished"),
+    ),
+    "cinematic": (
+        ChordSpec("C", "minor", open_voicing=True),
+        ChordSpec("D", "half_diminished", open_voicing=True),
+        ChordSpec("Eb", "major", open_voicing=True),
+        ChordSpec("F", "minor", open_voicing=True),
+        ChordSpec("G", "minor", open_voicing=True),
+        ChordSpec("Ab", "major", open_voicing=True),
+        ChordSpec("Bb", "major", open_voicing=True),
+    ),
+    "neo_soul": (
+        ChordSpec("C", "major7"),
+        ChordSpec("D", "minor7"),
+        ChordSpec("E", "minor7"),
+        ChordSpec("F", "major7"),
+        ChordSpec("G", "dominant7"),
+        ChordSpec("A", "minor7"),
+        ChordSpec("B", "half_diminished"),
+    ),
+}
+
 
 def progression_names() -> tuple[str, ...]:
     return tuple(PROGRESSIONS)
@@ -64,6 +130,14 @@ def progression_for(name: str) -> Progression:
         choices = ", ".join(progression_names())
         raise ValueError(f"unknown progression {name!r}; choose one of: {choices}") from exc
     return Progression(list(chords))
+
+
+def pose_chords_for(name: str) -> tuple[ChordSpec, ...]:
+    try:
+        return POSE_CHORD_BANKS[name]
+    except KeyError as exc:
+        choices = ", ".join(POSE_CHORD_BANKS)
+        raise ValueError(f"unknown chord bank {name!r}; choose one of: {choices}") from exc
 
 
 @dataclass(slots=True)

@@ -18,11 +18,14 @@ flowchart TD
   ARCH --> CV[Computer vision]
   ARCH --> GEST[Gesture + ML]
   ARCH --> MUSIC[Music systems]
-  ARCH --> AUDIO[Audio/MIDI]
+  MUSIC --> PERF[Expressive performance]
+  PERF --> AUDIO[Audio/MIDI]
+  AUDIO --> LOOP[Loop + transport]
+  LOOP --> NATIVE[Native plug-in + DSP]
+  NATIVE --> DAW[DAW integration]
   CV --> GEST
   GEST --> MUSIC
-  MUSIC --> AUDIO
-  AUDIO --> QA[QA + reliability]
+  DAW --> QA[QA + reliability]
   QA --> REL[Release engineering]
   DATA[Data/ML platform] --> GEST
   UX[Performer UX] --> QA

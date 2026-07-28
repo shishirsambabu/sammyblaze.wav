@@ -39,3 +39,20 @@ The current implementation establishes the support-safe diagnostics command, det
 release gate, performer QA/release runbook, idempotent shutdown cleanup, bounded live performance
 telemetry, integrated video canvas, and a desktop control surface. Signed installer packaging and
 crash-recovery proof remain the next Phase 6 slices.
+
+## Phase 7 — native DAW instrument (in progress)
+
+Exit criteria: a native VST3 can be loaded by FL Studio, accepts host MIDI and direct camera
+companion control, renders sound and effects without Python on the audio thread, persists
+automatable state, and passes Steinberg validation.
+
+The current slice delivers a validated C++20 VST3, localhost gesture bridge, sixteen-voice synth,
+sustain, parameter smoothing, reverb/delay/chorus, and a D:-based build. Physical FL Studio
+discovery is the remaining workstation smoke test. Host-synchronized PPQ looping, multi-instance
+routing, MPE/note expression, presets, signing, and installer integration are next.
+
+## Phase 8 — performance workstation
+
+Exit criteria: tempo/PPQ-aware loop scenes, quantize and swing, overdub/undo, count-in,
+metronome, clip export, scene automation, mapping learn, multi-instance routing, MPE/MIDI 2.0,
+and release-grade signing are verified across supported DAWs.

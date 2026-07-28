@@ -1,5 +1,8 @@
 from handmusic.common.models import GestureFeatures
+from handmusic.music.chord_engine import ChordSpec
 from handmusic.music.performance import (
+    HarmonicScaleEngine,
+    LeadScaleMode,
     MelodyPerformanceEngine,
     VoiceLeadingEngine,
     midi_note_name,
@@ -79,3 +82,21 @@ def test_midi_note_names_match_keyboard_octaves() -> None:
     assert midi_note_name(48) == "C3"
     assert midi_note_name(60) == "C4"
     assert midi_note_name(73) == "C#5"
+
+
+def test_harmonic_scale_follows_chord_root_and_quality() -> None:
+    engine = HarmonicScaleEngine(ChordSpec("C", "major7"))
+    assert engine.label == "C Ionian"
+    assert engine.notes[:4] == (60, 62, 64, 65)
+
+    engine.set_chord(ChordSpec("A", "minor7"))
+    assert engine.label == "A Aeolian"
+    assert engine.notes[:4] == (69, 71, 72, 74)
+
+
+def test_scale_mode_cycle_selects_quality_aware_color() -> None:
+    engine = HarmonicScaleEngine(ChordSpec("G", "dominant7"))
+
+    assert engine.cycle_mode() is LeadScaleMode.COLOR
+    assert engine.label == "G Altered"
+    assert {67, 71, 74, 77}.issubset(set(engine.notes))

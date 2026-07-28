@@ -2,61 +2,103 @@
 
 ```mermaid
 flowchart LR
-  C[Camera capture] --> T[Hand tracker]
-  T --> F[Feature extractor]
+  C[Camera capture] --> T[MediaPipe hand tracker]
+  T --> F[Normalized hand features]
   F --> G[Gesture state machine]
+  F --> E[3D expression controller]
   G --> I[Musical intent runtime]
-  I --> V[Voice-leading engine]
-  I --> M[Melody performance engine]
-  V --> N[Note manager]
-  M --> N
-  I --> N[Note manager]
-  N --> O1[MIDI output]
-  N --> O2[FluidSynth output]
-  T --> U[Diagnostics overlay]
-  G --> U
+  E --> I
+  I --> H[Chord-relative harmony engine]
+  I --> L[Legato melody engine]
+  H --> N[Note manager]
+  L --> N
+  N --> R[Loop transport]
+  R --> M[MIDI / SoundFont]
+  R --> B[Localhost bridge]
+  B --> Q[Lock-free plug-in mailbox]
+  Q --> P[VST3 synth + effects]
+  T --> U[Camera + expression playground]
+  I --> U
 ```
 
-## Boundaries
+## Runtime boundaries
 
 ### Capture and tracking
 
-`camera` owns frames and shutdown. `tracking` owns MediaPipe integration and converts vendor-specific results into `HandObservation`. No downstream module imports MediaPipe types.
+`tracking` owns camera and MediaPipe integration. It converts vendor results into
+`HandObservation`; downstream code never imports MediaPipe types. The live queue has capacity
+one, so an overloaded tracker discards stale frames instead of increasing musical latency.
 
-### Features and gestures
+### Gesture and expression
 
-`gestures.features` converts observations into normalized geometry and motion. `gestures.state_machine` turns features into discrete `GestureEvent` values. This layer owns stability, cooldown, and neutral re-arm behavior.
+`gestures.features` converts landmarks into normalized X/Y/Z, finger state, pinch distance,
+confidence, and velocity. `gestures.state_machine` turns stable left-hand shapes into discrete
+events with hold, cooldown, and release-to-rearm behavior.
 
-### Musical intent
+The right hand is continuous:
 
-`app.InstrumentRuntime` maps gestures to intent. It knows that “next chord” means progression navigation; it does not know how a camera landmark is represented.
+- X selects a scale-locked melody lane.
+- Motion speed drives vibrato.
+- Y drives volume and expression.
+- Z drives expression, brightness, and delay.
+- Pinch re-articulates and increases reverb.
 
-`music.performance` is the musicality layer:
+`ui.expression_playground` renders the same normalized state as a software 3D scene. Rendering
+is diagnostic only and cannot block the music path.
 
-- `VoiceLeadingEngine` chooses compact left-hand inversions that minimize movement.
-- `MelodyPerformanceEngine` adds scale locking, boundary hysteresis, motion velocity, and
-  intentional re-articulation.
-- The chord latch and physical sustain pedal are independent states, allowing clean harmonic
-  changes or deliberately overlapping pedal harmony.
+### Musical intent and transport
 
-### Sound output
+`app.InstrumentRuntime` maps commands to musical intent. The musicality layer owns:
 
-`music.chord_engine` maps a chord specification to MIDI note numbers. `music.note_manager` owns active-note truth and cleanup. Output adapters implement note/control delivery and are swappable.
+- seven style-specific pose chords;
+- minimum-motion chord voicing;
+- quality-aware, chord-relative lead scales;
+- legato note hysteresis and deliberate re-articulation;
+- independent chord latch and sustain pedal;
+- per-hand tracking-loss behavior.
 
-The output contract remains MIDI-compatible today. Its next expressive extension is a
-capability-negotiated MPE/MIDI 2.0 adapter for per-note pitch, pressure, and timbre without
-coupling gesture interpretation to any one synthesizer.
+`music.transport.LoopTransport` captures bounded note and control events. It gives live and loop
+notes separate ownership, so a loop note-off cannot cut off a note the performer is still
+holding.
 
-## Threading model
+### Output and DAW integration
+
+All outputs implement the same note/control contract:
+
+- Mido for hardware or virtual MIDI;
+- FluidSynth for standalone SoundFont audio;
+- a fixed-size localhost packet bridge for the native VST3.
+
+The companion sends 14-byte `SBW1` datagrams only to `127.0.0.1:18736`. The VST3 receives them
+on a background socket thread and places validated commands into a bounded SPSC queue. The audio
+thread drains that queue without socket calls, locks, memory allocation, Python, camera access,
+or network access.
+
+The VST3 also accepts ordinary DAW MIDI. It owns a native polyphonic synth, sustain behavior,
+parameter smoothing, stereo reverb/delay/chorus, parameter state, and generated-MIDI output.
+DAW transport synchronization and PPQ-quantized loop scenes are the next native transport slice;
+the current companion loop is wall-clock based.
+
+## State ownership
+
+| State | Single owner |
+|---|---|
+| Camera frame freshness | camera/latest-frame queue |
+| Pose stability and cooldown | gesture state machine |
+| Active harmonic context | instrument runtime |
+| Active notes and sustain | note manager |
+| Live-vs-loop note references | loop transport |
+| Plug-in voice and DSP state | VST3 audio processor |
+| DAW tempo and playhead | host transport |
+
+## Threading
 
 ```text
-camera thread -> latest-frame queue(maxsize=1) -> tracker worker
-tracker worker -> feature/event queue -> intent worker
-intent worker -> note manager -> output adapter
-UI thread reads immutable diagnostics snapshots
+camera thread -> latest frame (capacity 1) -> tracker / intent worker
+intent worker -> note manager -> loop transport -> selected output
+VST bridge socket thread -> bounded SPSC mailbox -> DAW audio thread
+UI thread <- immutable camera, expression, transport, and telemetry snapshots
 ```
-
-The queue policy is “latest frame wins.” Gesture events are timestamped so an overloaded UI cannot reorder musical commands.
 
 ## Latency budget
 
@@ -64,15 +106,18 @@ The queue policy is “latest frame wins.” Gesture events are timestamped so a
 |---|---:|
 | Capture and conversion | 10 ms |
 | Hand tracking | 35 ms |
-| Features + state machine | 5 ms |
-| Intent + voicing | 5 ms |
-| Output dispatch | 10 ms |
-| Headroom | 35 ms |
+| Features + gesture decision | 5 ms |
+| Harmony / melody / expression | 5 ms |
+| Output or bridge dispatch | 5 ms |
+| Audio buffer and headroom | 40 ms |
+
+The end-to-end target remains p95 under 100 ms on a supported laptop.
 
 ## Failure and safety rules
 
-- Tracking loss beyond the configured timeout calls `NoteManager.stop_all()`.
-- Any output switch stops the old output before opening the new one.
-- `Esc`, fist, exception, and normal exit all converge on the same stop path.
-- A note is considered active only after the output adapter accepts `note_on`.
-- MIDI values are clamped to `0..127`; invalid note values fail fast.
+- Right-hand loss for 250 ms releases melody while retaining the left-hand chord.
+- Both hands lost for 1500 ms, fist, panic, exception, and exit converge on all-notes-off.
+- Output switching closes the previous sink and clears sustain.
+- All queues and loop recordings are bounded.
+- MIDI and bridge values are validated to `0..127`.
+- The bridge binds only to loopback and its receiver never touches the DAW audio thread.

@@ -29,6 +29,7 @@ QUALITIES: dict[str, tuple[int, ...]] = {
     "dominant7": (0, 4, 7, 10),
     "major7": (0, 4, 7, 11),
     "minor7": (0, 3, 7, 10),
+    "half_diminished": (0, 3, 6, 10),
 }
 
 

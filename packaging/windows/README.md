@@ -22,3 +22,25 @@ the `[package,vision,midi-native,ui]` extras installed.
 
 This is an unsigned development bundle. Production distribution still needs a code-signing
 certificate, installer wrapper, and a release artifact review before publishing.
+
+## Native VST3
+
+The native instrument uses Visual Studio Build Tools, Ninja Multi-Config, and the Steinberg VST3
+SDK. On the D:-based workstation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build-native.ps1 -Validate
+```
+
+The script imports the x64 compiler environment, builds outside the repository at
+`D:\SammyBlazeBuild\native`, and optionally runs both the validator self-test and full plug-in
+suite. The valid bundle is:
+
+```text
+D:\SammyBlazeBuild\native\VST3\Release\SammyBlaze.vst3
+```
+
+Copy the complete directory to `C:\Program Files\Common Files\VST3\`, or install it under
+`D:\VST3\` and add that folder to FL Studio's plug-in search paths. Rescan, then run
+`D:\Python312\python.exe -m handmusic --ui`, choose `FL Studio / VST3 bridge`, and start the
+performer. The bridge is loopback-only on UDP port `18736`.

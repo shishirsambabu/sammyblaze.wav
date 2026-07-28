@@ -7,14 +7,31 @@ def features(timestamp: int, *, fingers=(True, True, True, True, True), pinch=1.
     return GestureFeatures("left", fingers, pinch, 0.0, 0.5, 0.5, 0.0, vx, 0.0, 0.95, timestamp)
 
 
-def test_open_palm_requires_hold_and_emits_once_until_neutral() -> None:
-    machine = GestureStateMachine(GestureConfig(open_palm_hold_ms=500, cooldown_ms=0))
+def test_open_palm_selects_fifth_chord_after_stable_hold() -> None:
+    machine = GestureStateMachine(GestureConfig(chord_pose_hold_ms=180, cooldown_ms=0))
     assert machine.process(features(0)) == []
-    assert machine.process(features(499)) == []
-    assert [event.kind for event in machine.process(features(500))] == [GestureKind.ARM]
+    assert machine.process(features(179)) == []
+    event = machine.process(features(180))[0]
+    assert event.kind is GestureKind.SELECT_CHORD
+    assert event.value == 4
     assert machine.process(features(700)) == []
-    machine.process(features(800, fingers=(True, False, False, False, False)))
-    assert machine.process(features(900)) == []
+
+
+def test_every_canonical_pose_selects_its_harmonic_degree() -> None:
+    poses = (
+        (True, False, False, False, False),
+        (True, True, False, False, False),
+        (True, True, True, False, False),
+        (True, True, True, True, False),
+        (True, True, True, True, True),
+        (False, False, False, True, True),
+        (True, False, False, False, True),
+    )
+    for expected, pose in enumerate(poses):
+        machine = GestureStateMachine(GestureConfig(chord_pose_hold_ms=180, cooldown_ms=0))
+        assert machine.process(features(0, fingers=pose)) == []
+        event = machine.process(features(180, fingers=pose))[0]
+        assert (event.kind, event.value) == (GestureKind.SELECT_CHORD, expected)
 
 
 def test_swipes_are_discrete_events() -> None:

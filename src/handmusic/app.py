@@ -18,18 +18,27 @@ from handmusic.diagnostics import collect_diagnostics, render_diagnostics
 from handmusic.gestures.features import extract_features
 from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
 from handmusic.ml.session import record_camera_session
-from handmusic.music.expression import ExpressionController
-from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
+from handmusic.music.chord_engine import ChordSpec, chord_notes
+from handmusic.music.expression import ExpressionController, ExpressionState
+from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput, PluginBridgeOutput
 from handmusic.music.modes import PerformanceMode
 from handmusic.music.note_manager import NoteManager
 from handmusic.music.performance import (
+    HarmonicScaleEngine,
     MelodyPerformanceEngine,
     VoiceLeadingEngine,
+    lead_mode_for_scale_name,
     midi_note_name,
 )
-from handmusic.music.progression import Progression, progression_for, progression_names
-from handmusic.music.scale import ScaleEngine, scale_for, scale_names
+from handmusic.music.progression import (
+    Progression,
+    pose_chords_for,
+    progression_for,
+    progression_names,
+)
+from handmusic.music.scale import scale_names
 from handmusic.music.standalone_synth import FluidSynthOutput
+from handmusic.music.transport import LoopTransport, TransportSnapshot
 from handmusic.telemetry import (
     PerformanceTelemetry,
     TelemetrySnapshot,
@@ -50,20 +59,30 @@ class InstrumentRuntime:
     arpeggiator_enabled: bool = False
     last_gesture: str = GestureKind.NO_GESTURE.value
     expression: ExpressionController = field(default_factory=ExpressionController)
-    scale: ScaleEngine = field(default_factory=ScaleEngine)
+    scale: HarmonicScaleEngine = field(
+        default_factory=lambda: HarmonicScaleEngine(ChordSpec("C", "major7"))
+    )
+    chord_bank: tuple[ChordSpec, ...] = field(default_factory=lambda: pose_chords_for("pop"))
+    transport: LoopTransport | None = None
     voice_leading: VoiceLeadingEngine = field(default_factory=VoiceLeadingEngine)
     melody: MelodyPerformanceEngine = field(init=False)
     mode: PerformanceMode = PerformanceMode.CHORD_SCALE
+    active_chord: ChordSpec | None = None
     last_scale_note: int | None = None
     last_chord_notes: tuple[int, ...] = ()
     tracking_loss_grace_ms: int = 1500
+    right_hand_loss_grace_ms: int = 250
+    expression_state: ExpressionState = field(default_factory=ExpressionState)
+    _last_cc: dict[int, tuple[int, int]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        self.active_chord = self.active_chord or self.progression.current
+        self.scale.set_chord(self.active_chord)
         self.melody = MelodyPerformanceEngine(self.scale)
 
     @property
     def chord_label(self) -> str:
-        chord = self.progression.current
+        chord = self.active_chord or self.progression.current
         return f"{chord.root} {chord.quality}"
 
     @property
@@ -76,16 +95,16 @@ class InstrumentRuntime:
         )
         return (
             f"Mode: {self.mode.value} | Chord latch: {latch} | Pedal: {pedal} | "
-            f"Chord: {chord_notes} | Melody: {melody_note} | Scale: {self.scale.spec.name}"
+            f"Chord: {chord_notes} | Melody: {melody_note} | "
+            f"Lead: {self.scale.label} ({self.scale.mode.value})"
         )
 
     def handle_features(self, features: GestureFeatures) -> int:
         event_count = 0
         if features.handedness == "right":
-            for control, value in self.expression.controls(features):
-                self.notes.control_change(control, value)
-            for control, value in self.expression.effect_controls(features):
-                self.notes.control_change(control, value)
+            expression = self.expression.process(features)
+            self.expression_state = expression.state
+            self._send_expression_controls(expression.controls, features.timestamp_ms)
             self._handle_scale_position(features)
             return 0
         if features.handedness != "left":
@@ -97,6 +116,12 @@ class InstrumentRuntime:
                 self.armed = True
                 if self.mode.accepts_chords:
                     self._play_current_chord()
+            elif event.kind is GestureKind.SELECT_CHORD:
+                chord_index = int(event.value or 0) % len(self.chord_bank)
+                self.active_chord = self.chord_bank[chord_index]
+                self.armed = True
+                if self.mode.accepts_chords:
+                    self._play_current_chord()
             elif event.kind is GestureKind.STOP_ALL:
                 self.armed = False
                 self.notes.stop_all()
@@ -105,17 +130,19 @@ class InstrumentRuntime:
                 self.melody.reset()
                 self.voice_leading.reset()
             elif event.kind is GestureKind.NEXT_CHORD:
-                self.progression.next()
+                self.active_chord = self.progression.next()
                 if self.armed and self.mode.accepts_chords:
                     self._play_current_chord()
             elif event.kind is GestureKind.PREVIOUS_CHORD:
-                self.progression.previous()
+                self.active_chord = self.progression.previous()
                 if self.armed and self.mode.accepts_chords:
                     self._play_current_chord()
             elif event.kind is GestureKind.TOGGLE_ARPEGGIATOR:
                 self.arpeggiator_enabled = not self.arpeggiator_enabled
             elif event.kind is GestureKind.CYCLE_MODE:
                 self._cycle_mode()
+            elif event.kind is GestureKind.CYCLE_SCALE_MODE:
+                self._cycle_scale_mode()
             elif event.kind is GestureKind.TOGGLE_SUSTAIN:
                 self.notes.set_sustain(not self.notes.sustain_enabled)
         return event_count
@@ -137,9 +164,26 @@ class InstrumentRuntime:
         self.last_scale_note = decision.note
 
     def _play_current_chord(self) -> None:
-        voiced = self.voice_leading.voice(self.progression.current_notes)
+        chord = self.active_chord or self.progression.current
+        self.scale.set_chord(chord)
+        voiced = self.voice_leading.voice(chord_notes(chord))
         self.notes.play_chord(voiced, velocity=92)
         self.last_chord_notes = voiced
+        retuned = self.melody.retuned_note()
+        if (
+            retuned is not None
+            and self.last_scale_note is not None
+            and self.mode.accepts_scale
+        ):
+            self.notes.play_melody_note(retuned, velocity=84, legato=True)
+            self.last_scale_note = retuned
+
+    def _cycle_scale_mode(self) -> None:
+        self.scale.cycle_mode()
+        retuned = self.melody.retuned_note()
+        if retuned is not None and self.last_scale_note is not None and self.mode.accepts_scale:
+            self.notes.play_melody_note(retuned, velocity=84, legato=True)
+            self.last_scale_note = retuned
 
     def _cycle_mode(self) -> None:
         self.mode = self.mode.next()
@@ -156,6 +200,36 @@ class InstrumentRuntime:
     def close(self) -> None:
         self.notes.close()
 
+    def toggle_recording(self, timestamp_ms: int | None = None) -> TransportSnapshot:
+        if self.transport is None:
+            return TransportSnapshot(False, False, 0, 0)
+        if self.transport.snapshot().recording:
+            if self.transport.stop_recording(timestamp_ms):
+                self.transport.start_playback(timestamp_ms)
+        else:
+            self.transport.start_recording(timestamp_ms)
+        return self.transport.snapshot()
+
+    def toggle_playback(self, timestamp_ms: int | None = None) -> TransportSnapshot:
+        if self.transport is None:
+            return TransportSnapshot(False, False, 0, 0)
+        if self.transport.snapshot().playing:
+            self.transport.stop_playback()
+        else:
+            self.transport.start_playback(timestamp_ms)
+        return self.transport.snapshot()
+
+    def clear_loop(self) -> TransportSnapshot:
+        if self.transport is None:
+            return TransportSnapshot(False, False, 0, 0)
+        self.transport.clear()
+        return self.transport.snapshot()
+
+    def release_melody_for_tracking_loss(self) -> None:
+        self.notes.stop_melody_note()
+        self.last_scale_note = None
+        self.melody.reset()
+
     def stop_for_tracking_loss(self) -> None:
         self.armed = False
         self.notes.stop_all()
@@ -163,6 +237,21 @@ class InstrumentRuntime:
         self.last_chord_notes = ()
         self.melody.reset()
         self.voice_leading.reset()
+
+    def _send_expression_controls(
+        self,
+        controls: tuple[tuple[int, int], ...],
+        timestamp_ms: int,
+    ) -> None:
+        for control, value in controls:
+            previous = self._last_cc.get(control)
+            if (
+                previous is None
+                or abs(value - previous[0]) >= 2
+                or timestamp_ms - previous[1] >= 50
+            ):
+                self.notes.control_change(control, value)
+                self._last_cc[control] = (value, timestamp_ms)
 
 
 def default_runtime(
@@ -173,6 +262,7 @@ def default_runtime(
 ) -> tuple[InstrumentRuntime, object]:
     output = output or MemoryMidiOutput()
     progression = progression_for(progression_name)
+    transport = LoopTransport(output)
     expression = ExpressionController(
         smoothing=preset.expression_smoothing if preset else 0.2,
         neutral_center_x=preset.neutral_center_x if preset else 0.5,
@@ -183,10 +273,15 @@ def default_runtime(
     gesture_config = GestureConfig(confidence=preset.gesture_confidence) if preset else None
     return InstrumentRuntime(
         progression,
-        NoteManager(output),
+        NoteManager(transport),
         GestureStateMachine(gesture_config),
         expression=expression,
-        scale=ScaleEngine(scale_for(scale_name)),
+        scale=HarmonicScaleEngine(
+            progression.current,
+            mode=lead_mode_for_scale_name(scale_name),
+        ),
+        chord_bank=pose_chords_for(progression_name),
+        transport=transport,
     ), output
 
 
@@ -271,6 +366,8 @@ def run_camera(
     telemetry_callback: Callable[[TelemetrySnapshot], None] | None = None,
     frame_callback: Callable[[object], None] | None = None,
     state_callback: Callable[[str], None] | None = None,
+    expression_callback: Callable[[ExpressionState], None] | None = None,
+    transport_callback: Callable[[TransportSnapshot], None] | None = None,
     display: bool = True,
 ) -> None:
     try:
@@ -284,6 +381,7 @@ def run_camera(
     previous: dict[str, GestureFeatures] = {}
     frame_times: deque[float] = deque(maxlen=30)
     last_observation_ms: int | None = None
+    last_hand_seen_ms: dict[str, int] = {}
     frame_count = 0
     last_state_label: str | None = None
     telemetry = telemetry or PerformanceTelemetry()
@@ -304,12 +402,23 @@ def run_camera(
             ):
                 runtime.stop_for_tracking_loss()
             for observation in observations:
+                last_hand_seen_ms[observation.handedness] = timestamp_ms
                 prior = previous.get(observation.handedness)
                 feature = extract_features(observation, prior)
                 previous[observation.handedness] = feature
                 telemetry.record_hand()
                 for _ in range(runtime.handle_features(feature)):
                     telemetry.record_gesture(feature.timestamp_ms)
+            right_seen = last_hand_seen_ms.get("right")
+            if (
+                runtime.last_scale_note is not None
+                and right_seen is not None
+                and timestamp_ms - right_seen >= runtime.right_hand_loss_grace_ms
+            ):
+                runtime.release_melody_for_tracking_loss()
+                last_hand_seen_ms.pop("right", None)
+            if runtime.transport is not None:
+                runtime.transport.tick(timestamp_ms)
             frame = draw_landmarks(frame, observations)
             elapsed = frame_times[-1] - frame_times[0] if len(frame_times) > 1 else 0.0
             fps = (len(frame_times) - 1) / elapsed if elapsed > 0 else 0.0
@@ -328,6 +437,10 @@ def run_camera(
             if state_callback is not None and runtime.status_label != last_state_label:
                 last_state_label = runtime.status_label
                 state_callback(last_state_label)
+            if expression_callback is not None:
+                expression_callback(runtime.expression_state)
+            if transport_callback is not None and runtime.transport is not None:
+                transport_callback(runtime.transport.snapshot())
             if telemetry_callback is not None:
                 telemetry_callback(telemetry.snapshot())
             if frame_callback is not None:
@@ -360,7 +473,11 @@ def main(argv: list[str] | None = None) -> int:
         help="launch the desktop performer control surface",
     )
     parser.add_argument("--camera", type=int, default=None)
-    parser.add_argument("--output", choices=("midi", "standalone", "null"), default="midi")
+    parser.add_argument(
+        "--output",
+        choices=("midi", "plugin", "standalone", "null"),
+        default="midi",
+    )
     parser.add_argument("--midi-port", default=None, help="MIDI output port name")
     parser.add_argument(
         "--progression",
@@ -418,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run or args.calibrate or args.record:
             parser.error("--ui cannot be combined with --dry-run, --calibrate, or --record")
         if args.output == "standalone":
-            parser.error("--ui currently supports --output midi or --output null")
+            parser.error("--ui currently supports --output midi, plugin, or null")
         from handmusic.ui.desktop import launch_ui
 
         return launch_ui(
@@ -470,6 +587,8 @@ def main(argv: list[str] | None = None) -> int:
         output = MemoryMidiOutput()
     elif args.output == "midi":
         output = MidoOutput(midi_port)
+    elif args.output == "plugin":
+        output = PluginBridgeOutput()
     else:
         if not soundfont:
             parser.error("--soundfont is required with --output standalone")

@@ -9,11 +9,13 @@ from .models import Handedness
 class GestureKind(StrEnum):
     NO_GESTURE = "no_gesture"
     ARM = "arm"
+    SELECT_CHORD = "select_chord"
     STOP_ALL = "stop_all"
     NEXT_CHORD = "next_chord"
     PREVIOUS_CHORD = "previous_chord"
     TOGGLE_ARPEGGIATOR = "toggle_arpeggiator"
     CYCLE_MODE = "cycle_mode"
+    CYCLE_SCALE_MODE = "cycle_scale_mode"
     TOGGLE_SUSTAIN = "toggle_sustain"
 
 
@@ -23,3 +25,4 @@ class GestureEvent:
     handedness: Handedness
     confidence: float
     timestamp_ms: int
+    value: int | str | None = None

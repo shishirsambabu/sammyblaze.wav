@@ -18,9 +18,34 @@ def test_only_right_hand_drives_expression_controls() -> None:
     controller = ExpressionController(smoothing=1.0)
     assert controller.controls(hand_features(handedness="left", x=0.2, y=0.2)) == ()
     assert controller.controls(hand_features(handedness="right", x=0.25, y=0.25)) == (
-        (11, 102),
-        (10, 32),
+        (11, 94),
+        (1, 0),
+        (74, 64),
     )
+
+
+def test_motion_depth_and_height_drive_independent_expression_axes() -> None:
+    controller = ExpressionController(smoothing=1.0)
+    moving = GestureFeatures(
+        "right",
+        (False,) * 5,
+        1.0,
+        0.0,
+        0.5,
+        0.2,
+        -0.4,
+        0.8,
+        0.4,
+        1.0,
+        100,
+    )
+
+    frame = controller.process(moving)
+
+    assert frame.state.vibrato > 0
+    assert frame.state.expression > 100
+    assert frame.state.brightness > 100
+    assert frame.state.volume > 100
 
 
 @pytest.mark.parametrize("alpha", [0.0, -0.1, 1.1])

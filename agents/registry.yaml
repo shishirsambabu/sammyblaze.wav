@@ -48,6 +48,20 @@ roles:
     depends_on: [lead-architect]
     deliverables: [chord engine, progression model, voicing tests, music presets]
     gate: Invalid music inputs fail clearly and output is independent of gesture geometry.
+  - id: expressive-performance
+    title: Expressive performance and harmony engineer
+    mission: Make two-hand output phrase like a keyboardist through harmony-aware melody and motion.
+    owns: [src/handmusic/music/performance.py, src/handmusic/music/expression.py]
+    depends_on: [music-systems, gesture-engineer]
+    deliverables: [chord-relative scales, voice leading, expression maps, musicality benchmarks]
+    gate: Chord changes remain playable, expression is bounded, and strong notes contain chord tones.
+  - id: loop-transport
+    title: Loop and transport engineer
+    mission: Own deterministic recording, playback, overdub safety, and host-time integration.
+    owns: [src/handmusic/music/transport.py]
+    depends_on: [music-systems, audio-midi, realtime-performance]
+    deliverables: [bounded loop engine, note ownership tests, PPQ transport, clip export]
+    gate: Loop note-off cannot steal live notes and every transport transition cleans up safely.
   - id: audio-midi
     title: Audio and MIDI engineer
     mission: Make MIDI and standalone SoundFont output reliable and interchangeable.
@@ -55,6 +69,20 @@ roles:
     depends_on: [music-systems]
     deliverables: [MIDI adapter, FluidSynth adapter, routing diagnostics, cleanup tests]
     gate: All output paths stop notes on loss, exception, switch, and exit.
+  - id: native-plugin
+    title: Native plug-in and DSP engineer
+    mission: Deliver real-time-safe native synthesis, effects, state, and plug-in formats.
+    owns: [native/plugin/, CMakeLists.txt, CMakePresets.json]
+    depends_on: [audio-midi, expressive-performance, realtime-performance]
+    deliverables: [VST3 processor, DSP effects, parameter state, validator report]
+    gate: The release bundle passes the official validator and the audio callback stays allocation-free.
+  - id: daw-integration
+    title: DAW integration engineer
+    mission: Connect the companion, plug-in, host transport, routing, and DAW-specific workflows.
+    owns: [protocol/, packaging/windows/build-native.ps1, docs/PHASE_7_NATIVE_PLUGIN.md]
+    depends_on: [native-plugin, loop-transport, performer-ux]
+    deliverables: [versioned bridge, FL Studio smoke test, host sync, multi-instance routing]
+    gate: A supported DAW discovers the plug-in and live gesture control survives stop, reload, and panic.
   - id: realtime-performance
     title: Real-time performance engineer
     mission: Keep camera-to-sound response predictable under load.

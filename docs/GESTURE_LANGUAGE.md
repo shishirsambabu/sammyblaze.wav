@@ -1,27 +1,59 @@
-# Gesture language v1
+# Gesture language v2
 
-The performer should be able to return to a neutral open/relaxed hand between discrete commands. Static poses are never mapped directly to repeated notes.
+Finger tuples are ordered **index, middle, ring, pinky, thumb**. A chord pose must remain stable
+for 180 ms with low hand velocity. Holding the same pose does not retrigger it.
 
-| Gesture | Hand | Semantics | Guard |
+## Left hand: harmony
+
+| Shape | Finger tuple | Degree | Default pop chord |
+|---|---|---:|---|
+| Index | `10000` | I | Cmaj7 |
+| Index + middle | `11000` | ii | Dm7 |
+| Three fingers | `11100` | iii | Em7 |
+| Four fingers | `11110` | IV | Fmaj7 |
+| Open palm | `11111` | V | G7 |
+| Shaka | `00011` | vi | Am7 |
+| Wide L | `10001` | vii | Bm7b5 |
+
+The selected style changes the seven chord definitions, not the physical grammar. Voice leading
+chooses compact inversions automatically. A chord remains latched when the left hand moves away.
+
+## Commands
+
+| Gesture/control | Hand | Meaning | Guard |
 |---|---|---|---|
-| Open palm | Left | Arm and latch current voiced chord | Held 500 ms |
-| Fist | Left | Stop all notes and disarm | Held 120 ms |
-| Swipe right | Left | Next progression slot | Velocity and cooldown |
-| Swipe left | Left | Previous progression slot | Velocity and cooldown |
-| Pinch | Left | Cycle performance mode | Held 180 ms |
-| Thumb only | Left | Toggle independent sustain pedal (MIDI CC64) | Held 220 ms |
-| Two fingers | Left | Toggle arpeggiator flag | Held 180 ms |
-| Horizontal movement | Right | Play stable legato scale note and pan | Hysteresis + smoothing |
-| Downward movement | Right | Add velocity to the next note attack | Motion bounded |
-| Vertical position | Right | Volume and expression | Smoothed continuously |
-| Pinch edge | Right | Re-articulate current note | Edge-triggered |
-| Pinch / depth | Right | Reverb, delay, and chorus sends | Smoothed continuously |
+| Pinch | Left | Cycle adaptive, color, pentatonic, blues, chord-tone lead modes | 400 ms |
+| Fist | Left | Panic: stop every note and disarm | 120 ms |
+| Swipe right/left | Left | Fallback next/previous progression chord | velocity + cooldown |
+| Pinch edge | Right | Re-articulate current melody note | edge-triggered |
+| Sustain button | UI | Toggle independent CC64 pedal | explicit control |
+| Record / Play / Clear | UI | Capture and control the bounded performance loop | explicit control |
 
-## Recognition rules
+Fist and pinch are reserved; they are never chord shapes. Sustain is an explicit UI control to
+avoid accidental pedal toggles during chord formation.
+
+## Right hand: chord-relative melody and expression
+
+| Dimension | Musical behavior |
+|---|---|
+| X position | Legato note from the active chord-relative palette |
+| Movement speed | Vibrato depth |
+| Y position / motion | Volume, expression, and attack energy |
+| Z toward / away | Expression, brightness, and delay |
+| Pinch amount | Reverb send |
+| Motion + Y | Chorus send |
+
+Adaptive mode selects a quality-aware scale: major to Ionian, minor to Aeolian, dominant to
+Mixolydian, diminished to Locrian, and augmented to whole tone. Color mode uses Lydian, Dorian,
+Altered, diminished, Locrian-natural-2, or Lydian-augmented colors. Every palette merges in the
+active chord tones, preventing avoidable clashes on strong notes.
+
+## Recognition and tracking rules
 
 1. Reject observations below confidence threshold.
-2. Require a stable hold for static commands.
-3. Emit a discrete event once, then enter cooldown.
-4. Do not re-arm the same gesture until neutral is observed.
-5. Route chord commands only from the left hand and scale/expression controls only from the right.
-6. Treat ordinary movement as `NO_GESTURE` in future ML datasets.
+2. Require a stable hold for every discrete pose.
+3. Emit once and require release before the same command can re-arm.
+4. Route chord commands only from the left and melody/expression only from the right.
+5. Release melody after 250 ms of right-hand loss while preserving the left chord.
+6. Stop all notes after 1500 ms with no tracked hands.
+7. Treat ordinary movement as `NO_GESTURE` in future ML datasets.

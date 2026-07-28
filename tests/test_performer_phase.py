@@ -3,7 +3,7 @@ from handmusic.common.events import GestureKind
 from handmusic.common.models import GestureFeatures
 from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
 from handmusic.music.midi_output import MemoryMidiOutput
-from handmusic.music.modes import PerformanceMode
+from handmusic.music.performance import LeadScaleMode
 from handmusic.music.progression import progression_for, progression_names
 from handmusic.music.scale import ScaleEngine, scale_for
 
@@ -45,24 +45,22 @@ def test_scale_engine_maps_right_hand_width_to_notes() -> None:
     assert engine.note_for_position(1.0) == 72
 
 
-def test_gesture_language_adds_mode_and_sustain_commands() -> None:
+def test_gesture_language_adds_chord_pose_and_designated_scale_mode_command() -> None:
     machine = GestureStateMachine(GestureConfig(cooldown_ms=0))
-    pinch = feature("left", 0, fingers=(False, True, False, False, False), pinch=0.2)
+    chord_pose = feature("left", 0, fingers=(True, True, False, False, False))
+    assert machine.process(chord_pose) == []
+    chord_event = machine.process(
+        feature("left", 180, fingers=(True, True, False, False, False))
+    )[0]
+    assert (chord_event.kind, chord_event.value) == (GestureKind.SELECT_CHORD, 1)
+
+    pinch = feature("left", 300, fingers=(False, True, True, True, False), pinch=0.2)
     assert machine.process(pinch) == []
     assert (
         machine.process(
-            feature("left", 180, fingers=(False, True, False, False, False), pinch=0.2)
+            feature("left", 700, fingers=(False, True, True, True, False), pinch=0.2)
         )[0].kind
-        is GestureKind.CYCLE_MODE
-    )
-    machine.process(feature("left", 200))
-    thumb_only = feature("left", 300, fingers=(True, False, False, False, False))
-    assert machine.process(thumb_only) == []
-    assert (
-        machine.process(
-            feature("left", 520, fingers=(True, False, False, False, False))
-        )[0].kind
-        is GestureKind.TOGGLE_SUSTAIN
+        is GestureKind.CYCLE_SCALE_MODE
     )
 
 
@@ -71,51 +69,45 @@ def test_two_hand_runtime_plays_chord_scale_and_sustain() -> None:
     runtime, _ = default_runtime(output)
     runtime.gestures.config = GestureConfig(cooldown_ms=0)
 
-    runtime.handle_features(feature("left", 0, fingers=(True,) * 5))
-    runtime.handle_features(feature("left", 500, fingers=(True,) * 5))
+    runtime.handle_features(feature("left", 0, fingers=(True, False, False, False, False)))
+    runtime.handle_features(feature("left", 180, fingers=(True, False, False, False, False)))
     assert runtime.armed is True
-    assert output.messages[:3] == [
+    assert output.messages[:4] == [
         ("note_on", 48, 92),
         ("note_on", 52, 92),
         ("note_on", 55, 92),
+        ("note_on", 59, 92),
     ]
 
-    runtime.handle_features(feature("right", 520, x=0.2, y=0.5))
+    runtime.handle_features(feature("right", 200, x=0.2, y=0.5))
     assert ("note_on", 65, 77) in output.messages
-    runtime.handle_features(feature("right", 540, x=1.0, y=0.5))
+    runtime.handle_features(feature("right", 220, x=1.0, y=0.5))
     assert ("note_on", 84, 77) in output.messages
 
-    runtime.handle_features(
-        feature("left", 600, fingers=(True, False, False, False, False))
-    )
-    runtime.handle_features(
-        feature("left", 820, fingers=(True, False, False, False, False))
-    )
+    runtime.notes.set_sustain(True)
     assert runtime.notes.sustain_enabled is True
     assert ("cc", 64, 127) in output.messages
 
     runtime.handle_features(feature("left", 900, fingers=(False,) * 5))
     runtime.handle_features(feature("left", 1020, fingers=(False,) * 5))
-    assert runtime.mode is PerformanceMode.CHORD_SCALE
+    assert runtime.armed is False
     runtime.close()
 
 
-def test_left_pinch_cycles_runtime_mode_and_releases_disabled_voice() -> None:
+def test_left_pinch_cycles_chord_relative_scale_mode() -> None:
     output = MemoryMidiOutput()
     runtime, _ = default_runtime(output)
     runtime.gestures.config = GestureConfig(cooldown_ms=0)
-    runtime.handle_features(feature("left", 0, fingers=(True,) * 5))
-    runtime.handle_features(feature("left", 500, fingers=(True,) * 5))
+    runtime.handle_features(feature("left", 0, fingers=(True, False, False, False, False)))
+    runtime.handle_features(feature("left", 180, fingers=(True, False, False, False, False)))
     runtime.handle_features(
-        feature("left", 600, fingers=(False, True, False, False, False), pinch=0.2)
+        feature("left", 300, fingers=(False, True, True, True, False), pinch=0.2)
     )
     runtime.handle_features(
-        feature("left", 780, fingers=(False, True, False, False, False), pinch=0.2)
+        feature("left", 700, fingers=(False, True, True, True, False), pinch=0.2)
     )
-    assert runtime.mode is PerformanceMode.CHORD_ONLY
-    runtime.handle_features(feature("right", 800, x=0.2))
-    assert runtime.last_scale_note is None
-    assert runtime.notes.active_notes == {48, 52, 55}
+    assert runtime.scale.mode is LeadScaleMode.COLOR
+    assert runtime.scale.label == "C Lydian"
     runtime.close()
 
 
@@ -125,5 +117,5 @@ def test_right_hand_effect_mapper_emits_standard_send_controls() -> None:
     runtime.handle_features(feature("right", 0, x=0.25, y=0.25, depth=-0.5, pinch=0.0))
     assert ("cc", 7, 102) in output.messages
     assert ("cc", 91, 127) in output.messages
-    assert ("cc", 94, 127) in output.messages
-    assert ("cc", 93, 64) in output.messages
+    assert ("cc", 94, 64) in output.messages
+    assert ("cc", 93, 8) in output.messages
