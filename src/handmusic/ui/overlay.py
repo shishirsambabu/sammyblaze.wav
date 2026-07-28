@@ -64,6 +64,8 @@ def draw_status(
     chord: str,
     fps: float,
     hands: int = 0,
+    mode: str = "chord + scale",
+    sustain: bool = False,
 ) -> Any:
     """Draw a minimal status overlay when OpenCV is available."""
     try:
@@ -73,7 +75,8 @@ def draw_status(
     color = (50, 220, 50) if armed else (80, 80, 220)
     cv2.putText(
         frame,
-        f"{'ARMED' if armed else 'DISARMED'} | {chord} | {gesture} | {hands} hands | {fps:.1f} FPS",
+        f"{'ARMED' if armed else 'DISARMED'} | {mode} | {chord} | "
+        f"sustain {'on' if sustain else 'off'} | {gesture} | {hands} hands | {fps:.1f} FPS",
         (20, 32),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,

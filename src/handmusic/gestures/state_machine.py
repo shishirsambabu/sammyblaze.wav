@@ -12,6 +12,8 @@ class GestureConfig:
     open_palm_hold_ms: int = 500
     fist_hold_ms: int = 120
     pinch_hold_ms: int = 180
+    sustain_hold_ms: int = 220
+    mode_hold_ms: int = 180
     swipe_velocity_threshold: float = 0.35
     cooldown_ms: int = 500
     neutral_pinch_distance: float = 0.9
@@ -47,7 +49,9 @@ class GestureStateMachine:
         open_palm = sum(features.fingers_open) >= 4
         fist = sum(features.fingers_open) == 0
         pinch = features.pinch_distance <= 0.45
-        neutral = not open_palm and not fist and not pinch
+        thumb_only = features.fingers_open == (True, False, False, False, False)
+        two_finger = features.fingers_open == (False, True, True, False, False)
+        neutral = not open_palm and not fist and not pinch and not thumb_only and not two_finger
 
         # Re-arm only after the pose has been released. Fist is an emergency
         # command and must remain available even during another gesture's cooldown.
@@ -85,7 +89,11 @@ class GestureStateMachine:
         elif fist:
             emit_once("fist", GestureKind.STOP_ALL, self.config.fist_hold_ms)
         elif pinch:
-            emit_once("pinch", GestureKind.TOGGLE_ARPEGGIATOR, self.config.pinch_hold_ms)
+            emit_once("pinch", GestureKind.CYCLE_MODE, self.config.mode_hold_ms)
+        elif thumb_only:
+            emit_once("thumb_only", GestureKind.TOGGLE_SUSTAIN, self.config.sustain_hold_ms)
+        elif two_finger:
+            emit_once("two_finger", GestureKind.TOGGLE_ARPEGGIATOR, self.config.pinch_hold_ms)
         else:
             self._candidate.pop(hand, None)
             if features.velocity_x >= self.config.swipe_velocity_threshold:

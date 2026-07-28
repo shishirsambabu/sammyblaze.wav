@@ -10,11 +10,18 @@ Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/c
 
 ## Phase 2 — playable progression (in progress)
 
-Exit criteria: open palm arms, swipes navigate `C-Am-F-G`, fist/`Esc` stop, tracking loss stops notes, and output routing/chord state is visible. The current implementation covers the local runtime path and in-memory validation; physical MIDI smoke testing remains environment-dependent.
+Exit criteria: the left hand arms and navigates a selectable progression, the right hand plays a
+selectable scale, sustain and mode changes are gesture-controlled, tracking loss stops notes, and
+output routing/chord/mode state is visible. The current implementation covers the local runtime
+path, in-memory validation, and desktop controls; physical MIDI smoke testing remains
+environment-dependent.
 
 ## Phase 3 — expression and standalone audio (in progress)
 
-Exit criteria: vertical/horizontal movement controls smoothed bounded CC values, and a SoundFont adapter plays without a DAW. The current implementation covers expression mapping and adapter hardening; physical FluidSynth verification remains environment-dependent.
+Exit criteria: vertical/horizontal/depth/pinch movement controls smoothed bounded volume,
+expression, pan, reverb, delay, and chorus CC values, and a SoundFont adapter plays without a DAW.
+The current implementation covers mapping and adapter hardening; physical FluidSynth verification
+remains environment-dependent.
 
 ## Phase 4 — calibration and presets (in progress)
 
@@ -28,4 +35,7 @@ Exit criteria: consented sessions are recorded, labeled, quality-checked, sessio
 
 Exit criteria: desktop UI, installer, diagnostics, crash-safe note cleanup, performance telemetry, documentation, and release checklist are complete.
 
-The current implementation establishes the support-safe diagnostics command, deterministic CI release gate, performer QA/release runbook, idempotent shutdown cleanup, bounded live performance telemetry, and a desktop control-surface foundation. Signed installer packaging and an integrated video canvas remain the next Phase 6 slices.
+The current implementation establishes the support-safe diagnostics command, deterministic CI
+release gate, performer QA/release runbook, idempotent shutdown cleanup, bounded live performance
+telemetry, integrated video canvas, and a desktop control surface. Signed installer packaging and
+crash-recovery proof remain the next Phase 6 slices.

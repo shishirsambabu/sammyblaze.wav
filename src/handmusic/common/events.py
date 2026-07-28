@@ -13,6 +13,8 @@ class GestureKind(StrEnum):
     NEXT_CHORD = "next_chord"
     PREVIOUS_CHORD = "previous_chord"
     TOGGLE_ARPEGGIATOR = "toggle_arpeggiator"
+    CYCLE_MODE = "cycle_mode"
+    TOGGLE_SUSTAIN = "toggle_sustain"
 
 
 @dataclass(frozen=True, slots=True)

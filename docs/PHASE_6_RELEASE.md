@@ -31,9 +31,19 @@ D:\Python312\python.exe -m handmusic --ui
 The bounded camera command is the hardware smoke test. Remove `--max-frames 1` for a normal
 session after confirming the camera preview and MIDI port are correct.
 
-The desktop control surface is launched with `--ui`. It keeps camera selection, MIDI port
-selection, null-output rehearsal, start/stop state, and live telemetry in one performer-facing
-window. The camera preview currently remains an OpenCV window owned by the capture loop.
+The desktop control surface is launched with `--ui`. It keeps camera, MIDI port, chord sequence,
+and right-hand scale selection, null-output rehearsal, start/stop state, connection state, and live
+telemetry in one performer-facing window. The live camera frame, camera/MIDI health indicators,
+mode, and sustain state are rendered inside that window.
+
+To build the Windows development bundle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1 -Python D:\Python312\python.exe
+```
+
+The output is an unsigned onedir bundle under `artifacts/windows/SammyBlaze/`. Production release
+still requires signing, an installer wrapper, and artifact review.
 
 The `midi-native` extra includes the Mido API and RtMidi backend together, so a fresh native MIDI
 environment only needs:
@@ -73,4 +83,4 @@ snapshot atomically for support or performance review.
 
 - reproducible Windows wheel/installer build with signed artifacts;
 - crash-recovery harness that proves all active notes are released after abrupt process termination;
-- integrated video canvas and device-health indicators inside the desktop window.
+- production installer signing and artifact publication.

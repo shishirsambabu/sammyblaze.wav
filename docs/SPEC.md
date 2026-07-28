@@ -6,7 +6,10 @@ SammyBlaze.wav lets a performer shape harmony and expression with their hands, w
 
 ## MVP scope
 
-The MVP supports one or two hands, a configurable chord progression, five discrete gestures, smoothed expression, MIDI output, and a standalone-audio adapter boundary. It must be usable without an LLM, cloud service, or internet connection after installation.
+The MVP supports two-hand chord/scale performance, named chord progressions and scales, discrete
+gesture commands, smoothed volume/expression/effect sends, sustain, MIDI output, and a
+standalone-audio adapter boundary. It must be usable without an LLM, cloud service, or internet
+connection after installation.
 
 ### In scope
 
@@ -20,7 +23,7 @@ The MVP supports one or two hands, a configurable chord progression, five discre
 
 ### Later scope
 
-- Scale-degree mode, inversions, two-hand voicing, arpeggiator scheduler.
+- Scheduled arpeggiator playback, richer two-hand voicing, and custom scale roots.
 - Custom gesture learning from session-partitioned recordings.
 - Small static classifier and then a sequence model only where rules fail.
 - Desktop UI for routing, calibration, recording, and performance presets.
@@ -37,5 +40,6 @@ The MVP supports one or two hands, a configurable chord progression, five discre
 
 1. Rules before ML: the first instrument must be debuggable by a performer and engineer.
 2. MIDI is the interoperability layer; standalone synthesis is a peer output adapter, not a second musical engine.
-3. Musical intent is represented as commands (`next_chord`, `expression`) rather than raw notes.
+3. Musical intent is represented as commands (`next_chord`, `scale_note`, `expression`, and
+   `effect_send`) rather than raw camera geometry.
 4. Recorded data is append-only and session-scoped; training/evaluation splits happen by session.

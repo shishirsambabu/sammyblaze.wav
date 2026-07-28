@@ -18,11 +18,12 @@ from handmusic.diagnostics import collect_diagnostics, render_diagnostics
 from handmusic.gestures.features import extract_features
 from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
 from handmusic.ml.session import record_camera_session
-from handmusic.music.chord_engine import ChordSpec
 from handmusic.music.expression import ExpressionController
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
+from handmusic.music.modes import PerformanceMode
 from handmusic.music.note_manager import NoteManager
-from handmusic.music.progression import Progression
+from handmusic.music.progression import Progression, progression_for, progression_names
+from handmusic.music.scale import ScaleEngine, scale_for, scale_names
 from handmusic.music.standalone_synth import FluidSynthOutput
 from handmusic.telemetry import (
     PerformanceTelemetry,
@@ -44,36 +45,78 @@ class InstrumentRuntime:
     arpeggiator_enabled: bool = False
     last_gesture: str = GestureKind.NO_GESTURE.value
     expression: ExpressionController = field(default_factory=ExpressionController)
+    scale: ScaleEngine = field(default_factory=ScaleEngine)
+    mode: PerformanceMode = PerformanceMode.CHORD_SCALE
+    last_scale_note: int | None = None
 
     @property
     def chord_label(self) -> str:
         chord = self.progression.current
         return f"{chord.root} {chord.quality}"
 
+    @property
+    def status_label(self) -> str:
+        sustain = "on" if self.notes.sustain_enabled else "off"
+        return f"Mode: {self.mode.value} | Sustain: {sustain} | Scale: {self.scale.spec.name}"
+
     def handle_features(self, features: GestureFeatures) -> int:
         event_count = 0
-        for control, value in self.expression.controls(features):
-            self.notes.control_change(control, value)
+        if features.handedness == "right":
+            for control, value in self.expression.controls(features):
+                self.notes.control_change(control, value)
+            for control, value in self.expression.effect_controls(features):
+                self.notes.control_change(control, value)
+            self._handle_scale_position(features)
+            return 0
+        if features.handedness != "left":
+            return 0
         for event in self.gestures.process(features):
             event_count += 1
             self.last_gesture = event.kind.value
             if event.kind is GestureKind.ARM:
                 self.armed = True
-                self.notes.play_chord(self.progression.current_notes)
+                if self.mode.accepts_chords:
+                    self.notes.play_chord(self.progression.current_notes)
             elif event.kind is GestureKind.STOP_ALL:
                 self.armed = False
                 self.notes.stop_all()
+                self.last_scale_note = None
             elif event.kind is GestureKind.NEXT_CHORD:
                 self.progression.next()
-                if self.armed:
+                if self.armed and self.mode.accepts_chords:
                     self.notes.play_chord(self.progression.current_notes)
             elif event.kind is GestureKind.PREVIOUS_CHORD:
                 self.progression.previous()
-                if self.armed:
+                if self.armed and self.mode.accepts_chords:
                     self.notes.play_chord(self.progression.current_notes)
             elif event.kind is GestureKind.TOGGLE_ARPEGGIATOR:
                 self.arpeggiator_enabled = not self.arpeggiator_enabled
+            elif event.kind is GestureKind.CYCLE_MODE:
+                self._cycle_mode()
+            elif event.kind is GestureKind.TOGGLE_SUSTAIN:
+                self.notes.set_sustain(not self.notes.sustain_enabled)
         return event_count
+
+    def _handle_scale_position(self, features: GestureFeatures) -> None:
+        if not self.armed or not self.mode.accepts_scale:
+            if self.last_scale_note is not None:
+                self.notes.stop_melody_note()
+                self.last_scale_note = None
+            return
+        note = self.scale.note_for_position(features.center_x)
+        velocity = round(72 + max(0.0, min(1.0, 1.0 - features.center_y)) * 55)
+        self.notes.play_melody_note(note, velocity)
+        self.last_scale_note = note
+
+    def _cycle_mode(self) -> None:
+        self.mode = self.mode.next()
+        if not self.mode.accepts_chords:
+            self.notes.stop_chord()
+        elif self.armed:
+            self.notes.play_chord(self.progression.current_notes)
+        if not self.mode.accepts_scale:
+            self.notes.stop_melody_note()
+            self.last_scale_note = None
 
     def close(self) -> None:
         self.notes.close()
@@ -81,25 +124,22 @@ class InstrumentRuntime:
     def stop_for_tracking_loss(self) -> None:
         self.armed = False
         self.notes.stop_all()
+        self.last_scale_note = None
 
 
 def default_runtime(
     output: object | None = None,
     preset: PerformerPreset | None = None,
+    progression_name: str = "pop",
+    scale_name: str = "major",
 ) -> tuple[InstrumentRuntime, object]:
     output = output or MemoryMidiOutput()
-    progression = Progression(
-        [
-            ChordSpec("C", "major"),
-            ChordSpec("A", "minor"),
-            ChordSpec("F", "major"),
-            ChordSpec("G", "major"),
-        ]
-    )
+    progression = progression_for(progression_name)
     expression = ExpressionController(
         smoothing=preset.expression_smoothing if preset else 0.2,
         neutral_center_x=preset.neutral_center_x if preset else 0.5,
         neutral_center_y=preset.neutral_center_y if preset else 0.5,
+        neutral_depth=preset.neutral_depth if preset else 0.0,
         sensitivity=preset.sensitivity if preset else 1.0,
     )
     gesture_config = GestureConfig(confidence=preset.gesture_confidence) if preset else None
@@ -108,6 +148,7 @@ def default_runtime(
         NoteManager(output),
         GestureStateMachine(gesture_config),
         expression=expression,
+        scale=ScaleEngine(scale_for(scale_name)),
     ), output
 
 
@@ -190,6 +231,9 @@ def run_camera(
     telemetry: PerformanceTelemetry | None = None,
     stop_event: Event | None = None,
     telemetry_callback: Callable[[TelemetrySnapshot], None] | None = None,
+    frame_callback: Callable[[object], None] | None = None,
+    state_callback: Callable[[str], None] | None = None,
+    display: bool = True,
 ) -> None:
     try:
         import cv2
@@ -203,6 +247,7 @@ def run_camera(
     frame_times: deque[float] = deque(maxlen=30)
     last_observation_ms: int | None = None
     frame_count = 0
+    last_state_label: str | None = None
     telemetry = telemetry or PerformanceTelemetry()
     try:
         for frame, timestamp_ms in frames(camera_index):
@@ -237,17 +282,26 @@ def run_camera(
                 gesture=runtime.last_gesture,
                 fps=fps,
                 hands=len(observations),
+                mode=runtime.mode.value,
+                sustain=runtime.notes.sustain_enabled,
             )
+            if state_callback is not None and runtime.status_label != last_state_label:
+                last_state_label = runtime.status_label
+                state_callback(last_state_label)
             if telemetry_callback is not None:
                 telemetry_callback(telemetry.snapshot())
-            cv2.imshow("SammyBlaze.wav", frame)
-            if cv2.waitKey(1) & 0xFF == 27:
-                break
+            if frame_callback is not None:
+                frame_callback(frame)
+            if display:
+                cv2.imshow("SammyBlaze.wav", frame)
+                if cv2.waitKey(1) & 0xFF == 27:
+                    break
             if max_frames is not None and frame_count >= max_frames:
                 break
     finally:
         tracker.close()
-        cv2.destroyAllWindows()
+        if display:
+            cv2.destroyAllWindows()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -268,6 +322,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--camera", type=int, default=None)
     parser.add_argument("--output", choices=("midi", "standalone", "null"), default="midi")
     parser.add_argument("--midi-port", default=None, help="MIDI output port name")
+    parser.add_argument(
+        "--progression",
+        choices=progression_names(),
+        default="pop",
+        help="named chord progression",
+    )
+    parser.add_argument(
+        "--scale",
+        choices=scale_names(),
+        default="major",
+        help="right-hand scale mapping",
+    )
     parser.add_argument("--soundfont", default=None, help="SoundFont path for standalone output")
     parser.add_argument(
         "--hand-model",
@@ -315,7 +381,13 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--ui currently supports --output midi or --output null")
         from handmusic.ui.desktop import launch_ui
 
-        return launch_ui(args.camera or 0, args.midi_port, args.output)
+        return launch_ui(
+            args.camera or 0,
+            args.midi_port,
+            args.output,
+            args.progression,
+            args.scale,
+        )
     if args.diagnostics:
         print(render_diagnostics(collect_diagnostics(args.hand_model)))
         return 0
@@ -362,12 +434,15 @@ def main(argv: list[str] | None = None) -> int:
         if not soundfont:
             parser.error("--soundfont is required with --output standalone")
         output = FluidSynthOutput(soundfont)
-    runtime, output = default_runtime(output, preset)
+    runtime, output = default_runtime(output, preset, args.progression, args.scale)
     telemetry = PerformanceTelemetry()
     try:
         with _shutdown_guard(runtime):
             if args.dry_run:
-                print("SammyBlaze.wav dry-run ready: C major -> A minor -> F major -> G major")
+                print(
+                    "SammyBlaze.wav dry-run ready: "
+                    f"{args.progression} progression, {args.scale} scale"
+                )
                 return 0
             run_camera(
                 runtime,

@@ -4,13 +4,16 @@ The performer should be able to return to a neutral open/relaxed hand between di
 
 | Gesture | Hand | Semantics | Guard |
 |---|---|---|---|
-| Open palm | Left or primary | Arm and play current chord | Held 500 ms |
-| Fist | Any | Stop all notes and disarm | Confidence > 0.70 |
-| Swipe right | Left or primary | Next progression slot | Velocity and cooldown |
-| Swipe left | Left or primary | Previous progression slot | Velocity and cooldown |
-| Pinch | Right or primary | Toggle arpeggiator | Held 180 ms |
-| Vertical movement | Right | Expression/volume | Smoothed continuously |
-| Horizontal movement | Right | Pan/filter target | Smoothed continuously |
+| Open palm | Left | Arm and play current chord | Held 500 ms |
+| Fist | Left | Stop all notes and disarm | Held 120 ms |
+| Swipe right | Left | Next progression slot | Velocity and cooldown |
+| Swipe left | Left | Previous progression slot | Velocity and cooldown |
+| Pinch | Left | Cycle performance mode | Held 180 ms |
+| Thumb only | Left | Toggle chord sustain (MIDI CC64) | Held 220 ms |
+| Two fingers | Left | Toggle arpeggiator flag | Held 180 ms |
+| Horizontal movement | Right | Play selected scale note and pan | Smoothed continuously |
+| Vertical movement | Right | Volume and expression | Smoothed continuously |
+| Pinch / depth | Right | Reverb, delay, and chorus sends | Smoothed continuously |
 
 ## Recognition rules
 
@@ -18,4 +21,5 @@ The performer should be able to return to a neutral open/relaxed hand between di
 2. Require a stable hold for static commands.
 3. Emit a discrete event once, then enter cooldown.
 4. Do not re-arm the same gesture until neutral is observed.
-5. Treat ordinary movement as `NO_GESTURE` in future ML datasets.
+5. Route chord commands only from the left hand and scale/expression controls only from the right.
+6. Treat ordinary movement as `NO_GESTURE` in future ML datasets.

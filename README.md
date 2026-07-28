@@ -8,15 +8,19 @@ The product is intentionally split into four replaceable layers:
 Webcam -> hand landmarks -> gesture events -> musical commands -> MIDI / standalone audio
 ```
 
-The first milestone is a playable progression instrument:
+The current performer milestone is a two-hand playable instrument:
 
-- open palm held for 500 ms: arm and play the current chord
-- swipe right / left: next / previous chord
-- right-hand vertical position: expression/volume
-- pinch: toggle arpeggiator mode
-- fist or `Esc`: stop all notes immediately
+- left open palm held for 500 ms: arm and play the current chord
+- left swipe right / left: next / previous chord
+- left pinch: cycle chord/scale, chord-only, scale-only, and effects-only modes
+- left thumb-only pose: toggle MIDI sustain for chords
+- left fist or `Esc`: stop all notes immediately
+- right-hand horizontal position: play the selected scale
+- right-hand height: volume and expression; pinch/depth/position shape reverb, delay, pan, and chorus
 
-The default progression is `C major -> A minor -> F major -> G major`.
+The default progression is `C major -> A minor -> F major -> G major`. The CLI and desktop UI
+also provide anthem, minor-drive, jazz ii-V-I, blues, cinematic, and neo-soul sequences, plus
+major, minor, pentatonic, dorian, and blues scale mappings.
 
 ## Repository map
 
@@ -66,7 +70,18 @@ When reporting a machine-specific issue, run `python -m handmusic --diagnostics`
 
 Camera sessions print frame age, dropped-frame, and gesture-latency telemetry on exit. Add `--telemetry-json path/to/session-telemetry.json` to save the bounded report for later review.
 
-The optional `--ui` command opens the desktop performer control surface. It provides explicit camera and MIDI-output selection, a null-output mode for rehearsal, start/stop controls, connection state, and live telemetry. Install the UI extra first with `python -m pip install -e ".[ui]"`.
+The optional `--ui` command opens the desktop performer control surface. It provides explicit camera,
+MIDI-output, chord-sequence, and right-hand-scale selection, a null-output mode for rehearsal,
+start/stop controls, connection state, the integrated camera canvas, performer mode/sustain state,
+and live telemetry. Install the UI extra first with `python -m pip install -e ".[ui]"`.
+
+For a specific playable setup:
+
+```powershell
+python -m handmusic --camera 0 --output midi --progression blues --scale blues
+```
+
+To create a Windows development bundle, run `powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1`. The bundle is unsigned until a production code-signing certificate is configured.
 
 ## Development principles
 

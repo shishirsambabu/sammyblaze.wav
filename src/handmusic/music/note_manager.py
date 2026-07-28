@@ -21,17 +21,47 @@ class NoteManager:
     def __init__(self, sink: NoteSink) -> None:
         self.sink = sink
         self.active_notes: set[int] = set()
+        self.sustain_enabled = False
+        self._owners: dict[int, set[str]] = {}
         self._closed = False
 
     def play_chord(self, notes: tuple[int, ...], velocity: int = 96) -> None:
         if self._closed:
             raise RuntimeError("note manager is closed")
         velocity = _midi(velocity)
-        self.stop_all()
+        self._release_owner("chord")
         for note in notes:
             note = _midi(note)
-            self.sink.note_on(note, velocity)
-            self.active_notes.add(note)
+            self._acquire(note, "chord", velocity)
+
+    def stop_chord(self) -> None:
+        if self._closed:
+            raise RuntimeError("note manager is closed")
+        self._release_owner("chord")
+
+    def play_melody_note(self, note: int, velocity: int = 96) -> None:
+        if self._closed:
+            raise RuntimeError("note manager is closed")
+        note = _midi(note)
+        velocity = _midi(velocity)
+        if "melody" in self._owners.get(note, set()):
+            return
+        self._release_owner("melody")
+        self._acquire(note, "melody", velocity)
+
+    def stop_melody_note(self) -> None:
+        if self._closed:
+            raise RuntimeError("note manager is closed")
+        self._release_owner("melody")
+
+    def set_sustain(self, enabled: bool) -> None:
+        if self._closed:
+            raise RuntimeError("note manager is closed")
+        enabled = bool(enabled)
+        if enabled == self.sustain_enabled:
+            return
+        self.sustain_enabled = enabled
+        self.sink.control_change(64, 127 if enabled else 0)
 
     def control_change(self, control: int, value: int) -> None:
         if self._closed:
@@ -41,13 +71,34 @@ class NoteManager:
     def stop_all(self) -> None:
         for note in tuple(self.active_notes):
             self.sink.note_off(note)
+        self._owners.clear()
         self.active_notes.clear()
+        if self.sustain_enabled:
+            self.sustain_enabled = False
+            self.sink.control_change(64, 0)
 
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         self.stop_all()
+        self._closed = True
         close = getattr(self.sink, "close", None)
         if close is not None:
             close()
+
+    def _acquire(self, note: int, owner: str, velocity: int) -> None:
+        owners = self._owners.setdefault(note, set())
+        if not owners:
+            self.sink.note_on(note, velocity)
+        owners.add(owner)
+        self.active_notes.add(note)
+
+    def _release_owner(self, owner: str) -> None:
+        for note, owners in tuple(self._owners.items()):
+            if owner not in owners:
+                continue
+            owners.remove(owner)
+            if not owners:
+                self.sink.note_off(note)
+                self.active_notes.discard(note)
+                del self._owners[note]
