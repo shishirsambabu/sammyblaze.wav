@@ -28,4 +28,4 @@ Exit criteria: consented sessions are recorded, labeled, quality-checked, sessio
 
 Exit criteria: desktop UI, installer, diagnostics, crash-safe note cleanup, performance telemetry, documentation, and release checklist are complete.
 
-The current implementation establishes the support-safe diagnostics command, deterministic CI release gate, performer QA/release runbook, idempotent shutdown cleanup, and bounded live performance telemetry. Desktop UI and signed installer packaging remain the next Phase 6 slices.
+The current implementation establishes the support-safe diagnostics command, deterministic CI release gate, performer QA/release runbook, idempotent shutdown cleanup, bounded live performance telemetry, and a desktop control-surface foundation. Signed installer packaging and an integrated video canvas remain the next Phase 6 slices.

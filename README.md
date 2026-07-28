@@ -42,6 +42,7 @@ python -m pip install -e ".[dev]"
 python -m pytest
 python -m handmusic --dry-run
 python -m handmusic --diagnostics
+python -m handmusic --ui
 ```
 
 For camera/MIDI development, install the optional runtime extras:
@@ -64,6 +65,8 @@ The first launch should be done with `--dry-run` or a null output. Hardware adap
 When reporting a machine-specific issue, run `python -m handmusic --diagnostics` from the project environment and attach the text output. The command does not open the camera, MIDI port, or synthesizer.
 
 Camera sessions print frame age, dropped-frame, and gesture-latency telemetry on exit. Add `--telemetry-json path/to/session-telemetry.json` to save the bounded report for later review.
+
+The optional `--ui` command opens the desktop performer control surface. It provides explicit camera and MIDI-output selection, a null-output mode for rehearsal, start/stop controls, connection state, and live telemetry. Install the UI extra first with `python -m pip install -e ".[ui]"`.
 
 ## Development principles
 

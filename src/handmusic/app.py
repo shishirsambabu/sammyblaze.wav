@@ -4,10 +4,11 @@ import argparse
 import atexit
 import signal
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 from time import monotonic
 
 from handmusic.calibration import CalibrationSession, PerformerPreset, PresetStore
@@ -23,7 +24,12 @@ from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
 from handmusic.music.note_manager import NoteManager
 from handmusic.music.progression import Progression
 from handmusic.music.standalone_synth import FluidSynthOutput
-from handmusic.telemetry import PerformanceTelemetry, render_telemetry, save_telemetry
+from handmusic.telemetry import (
+    PerformanceTelemetry,
+    TelemetrySnapshot,
+    render_telemetry,
+    save_telemetry,
+)
 from handmusic.tracking.camera import frames
 from handmusic.tracking.hand_tracker import MediaPipeHandTracker
 from handmusic.ui.overlay import draw_landmarks, draw_status
@@ -182,6 +188,8 @@ def run_camera(
     max_frames: int | None = None,
     hand_model: str = "models/hand_landmarker.task",
     telemetry: PerformanceTelemetry | None = None,
+    stop_event: Event | None = None,
+    telemetry_callback: Callable[[TelemetrySnapshot], None] | None = None,
 ) -> None:
     try:
         import cv2
@@ -198,6 +206,8 @@ def run_camera(
     telemetry = telemetry or PerformanceTelemetry()
     try:
         for frame, timestamp_ms in frames(camera_index):
+            if stop_event is not None and stop_event.is_set():
+                break
             frame_count += 1
             telemetry.record_frame(timestamp_ms)
             frame_times.append(monotonic())
@@ -228,6 +238,8 @@ def run_camera(
                 fps=fps,
                 hands=len(observations),
             )
+            if telemetry_callback is not None:
+                telemetry_callback(telemetry.snapshot())
             cv2.imshow("SammyBlaze.wav", frame)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
@@ -247,6 +259,11 @@ def main(argv: list[str] | None = None) -> int:
         "--diagnostics",
         action="store_true",
         help="print a support-safe environment report without opening hardware",
+    )
+    parser.add_argument(
+        "--ui",
+        action="store_true",
+        help="launch the desktop performer control surface",
     )
     parser.add_argument("--camera", type=int, default=None)
     parser.add_argument("--output", choices=("midi", "standalone", "null"), default="midi")
@@ -291,6 +308,14 @@ def main(argv: list[str] | None = None) -> int:
         help="save end-of-session performance telemetry as JSON",
     )
     args = parser.parse_args(argv)
+    if args.ui:
+        if args.dry_run or args.calibrate or args.record:
+            parser.error("--ui cannot be combined with --dry-run, --calibrate, or --record")
+        if args.output == "standalone":
+            parser.error("--ui currently supports --output midi or --output null")
+        from handmusic.ui.desktop import launch_ui
+
+        return launch_ui(args.camera or 0, args.midi_port, args.output)
     if args.diagnostics:
         print(render_diagnostics(collect_diagnostics(args.hand_model)))
         return 0
