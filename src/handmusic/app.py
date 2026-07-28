@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from dataclasses import dataclass
+from time import monotonic
 
 from handmusic.common.events import GestureKind
 from handmusic.common.models import GestureFeatures
@@ -14,7 +16,7 @@ from handmusic.music.progression import Progression
 from handmusic.music.standalone_synth import FluidSynthOutput
 from handmusic.tracking.camera import frames
 from handmusic.tracking.hand_tracker import MediaPipeHandTracker
-from handmusic.ui.overlay import draw_status
+from handmusic.ui.overlay import draw_landmarks, draw_status
 
 
 @dataclass(slots=True)
@@ -71,15 +73,26 @@ def run_camera(runtime: InstrumentRuntime, camera_index: int) -> None:
 
     tracker = MediaPipeHandTracker()
     previous: dict[str, GestureFeatures] = {}
+    frame_times: deque[float] = deque(maxlen=30)
     try:
         for frame, timestamp_ms in frames(camera_index):
+            frame_times.append(monotonic())
             observations = tracker.process(frame, timestamp_ms)
             for observation in observations:
                 prior = previous.get(observation.handedness)
                 feature = extract_features(observation, prior)
                 previous[observation.handedness] = feature
                 runtime.handle_features(feature)
-            frame = draw_status(frame, armed=runtime.armed, gesture=runtime.last_gesture, fps=0.0)
+            frame = draw_landmarks(frame, observations)
+            elapsed = frame_times[-1] - frame_times[0] if len(frame_times) > 1 else 0.0
+            fps = (len(frame_times) - 1) / elapsed if elapsed > 0 else 0.0
+            frame = draw_status(
+                frame,
+                armed=runtime.armed,
+                gesture=runtime.last_gesture,
+                fps=fps,
+                hands=len(observations),
+            )
             cv2.imshow("SammyBlaze.wav", frame)
             if cv2.waitKey(1) & 0xFF == 27:
                 break

@@ -4,9 +4,9 @@
 
 Exit criteria: repository rules, contracts, deterministic chord engine, note cleanup, test harness, and agent roster exist.
 
-## Phase 1 — camera diagnostics
+## Phase 1 — camera diagnostics (in progress)
 
-Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/confidence/FPS are overlaid, and clean shutdown works.
+Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/confidence/FPS are overlaid, and clean shutdown works. The current implementation includes a bounded latest-frame capture path and hardware-independent queue tests; physical webcam verification remains an opt-in smoke test.
 
 ## Phase 2 — playable progression
 
