@@ -11,6 +11,7 @@ from handmusic.common.events import GestureKind
 from handmusic.common.models import GestureFeatures
 from handmusic.gestures.features import extract_features
 from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
+from handmusic.ml.session import record_camera_session
 from handmusic.music.chord_engine import ChordSpec
 from handmusic.music.expression import ExpressionController
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
@@ -231,6 +232,14 @@ def main(argv: list[str] | None = None) -> int:
         default=60,
         help="number of confident samples required for calibration",
     )
+    parser.add_argument("--record", default=None, help="append a labeled feature session to JSONL")
+    parser.add_argument("--label", default=None, help="gesture label for --record")
+    parser.add_argument(
+        "--record-seconds",
+        type=float,
+        default=10.0,
+        help="recording duration for --record",
+    )
     args = parser.parse_args(argv)
     preset = PresetStore.load(args.preset) if args.preset else None
     camera_index = (
@@ -246,6 +255,19 @@ def main(argv: list[str] | None = None) -> int:
             camera_index,
             args.hand_model,
             args.calibration_samples,
+        )
+        return 0
+    if args.record:
+        if not args.label:
+            parser.error("--label is required with --record")
+        if args.dry_run:
+            parser.error("--record cannot be combined with --dry-run")
+        record_camera_session(
+            args.record,
+            args.label,
+            camera_index,
+            args.hand_model,
+            args.record_seconds,
         )
         return 0
     midi_port = (

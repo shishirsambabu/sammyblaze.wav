@@ -20,9 +20,9 @@ Exit criteria: vertical/horizontal movement controls smoothed bounded CC values,
 
 Exit criteria: per-user neutral pose, camera orientation, sensitivity, and routing can be saved as a versioned preset. The current implementation covers median-based sample calibration, atomic JSON persistence, preset loading, and runtime application.
 
-## Phase 5 — data and custom ML
+## Phase 5 — data and custom ML (in progress)
 
-Exit criteria: consented sessions are recorded, labeled, quality-checked, session-split, and benchmarked against rules before a model is shipped.
+Exit criteria: consented sessions are recorded, labeled, quality-checked, session-split, and benchmarked against rules before a model is shipped. The current implementation covers append-only feature recording, a negative-class-friendly schema, session-safe splitting, and an optional Random Forest baseline.
 
 ## Phase 6 — performer product
 
