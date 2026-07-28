@@ -4,6 +4,9 @@ Phase 6 turns the working instrument into something a performer can install, tes
 This first slice adds a hardware-free diagnostics report and a repeatable release gate. It keeps
 the live path local and avoids opening camera or MIDI devices during support collection.
 
+The runtime now also installs a cleanup guard for normal exits, uncaught Python exceptions,
+Ctrl+C, and SIGTERM. Active notes are released once, and a second cleanup call is safe.
+
 ## Support command
 
 Run this from the environment that launches the instrument:
@@ -21,6 +24,7 @@ For the D: Python 3.12 performer environment used during native MIDI bring-up:
 ```powershell
 D:\Python312\python.exe -m handmusic --diagnostics
 D:\Python312\python.exe -m handmusic --camera 0 --output midi --max-frames 1
+D:\Python312\python.exe -m handmusic --camera 0 --output midi --max-frames 1 --telemetry-json session-telemetry.json
 ```
 
 The bounded camera command is the hardware smoke test. Remove `--max-frames 1` for a normal
@@ -56,9 +60,12 @@ Before a performer build is published, run the optional checks that match the ta
 Hardware checks are intentionally outside CI. CI verifies deterministic behavior; the release
 operator verifies the machine-specific camera, MIDI driver, audio backend, and model file.
 
+Every camera session prints bounded telemetry for frames seen, observed hands, gesture events,
+dropped frames, effective FPS, frame age, and gesture latency. `--telemetry-json` writes the same
+snapshot atomically for support or performance review.
+
 ## Remaining Phase 6 slices
 
 - desktop performer UI with explicit device selection and visible connection state;
 - reproducible Windows wheel/installer build with signed artifacts;
-- runtime performance telemetry for frame age, gesture latency, and dropped frames;
-- crash-recovery harness that proves all active notes are released on process shutdown.
+- crash-recovery harness that proves all active notes are released after abrupt process termination.

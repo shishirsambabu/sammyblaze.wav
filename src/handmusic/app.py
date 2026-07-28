@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+import signal
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
@@ -19,6 +23,7 @@ from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
 from handmusic.music.note_manager import NoteManager
 from handmusic.music.progression import Progression
 from handmusic.music.standalone_synth import FluidSynthOutput
+from handmusic.telemetry import PerformanceTelemetry, render_telemetry, save_telemetry
 from handmusic.tracking.camera import frames
 from handmusic.tracking.hand_tracker import MediaPipeHandTracker
 from handmusic.ui.overlay import draw_landmarks, draw_status
@@ -39,10 +44,12 @@ class InstrumentRuntime:
         chord = self.progression.current
         return f"{chord.root} {chord.quality}"
 
-    def handle_features(self, features: GestureFeatures) -> None:
+    def handle_features(self, features: GestureFeatures) -> int:
+        event_count = 0
         for control, value in self.expression.controls(features):
             self.notes.control_change(control, value)
         for event in self.gestures.process(features):
+            event_count += 1
             self.last_gesture = event.kind.value
             if event.kind is GestureKind.ARM:
                 self.armed = True
@@ -60,6 +67,7 @@ class InstrumentRuntime:
                     self.notes.play_chord(self.progression.current_notes)
             elif event.kind is GestureKind.TOGGLE_ARPEGGIATOR:
                 self.arpeggiator_enabled = not self.arpeggiator_enabled
+        return event_count
 
     def close(self) -> None:
         self.notes.close()
@@ -95,6 +103,31 @@ def default_runtime(
         GestureStateMachine(gesture_config),
         expression=expression,
     ), output
+
+
+@contextmanager
+def _shutdown_guard(runtime: InstrumentRuntime) -> Iterator[None]:
+    """Release active notes for normal exits, uncaught exceptions, and Ctrl+C/SIGTERM."""
+
+    cleanup = runtime.close
+    atexit.register(cleanup)
+    previous_handlers: dict[int, signal.Handlers] = {}
+
+    def handle_signal(signum: int, frame: object) -> None:
+        runtime.close()
+        raise KeyboardInterrupt(f"received shutdown signal {signum}")
+
+    try:
+        for signal_name in ("SIGINT", "SIGTERM"):
+            signum = getattr(signal, signal_name, None)
+            if signum is not None:
+                previous_handlers[signum] = signal.getsignal(signum)
+                signal.signal(signum, handle_signal)
+        yield
+    finally:
+        atexit.unregister(cleanup)
+        for signum, previous in previous_handlers.items():
+            signal.signal(signum, previous)
 
 
 def calibrate_camera(
@@ -148,6 +181,7 @@ def run_camera(
     camera_index: int,
     max_frames: int | None = None,
     hand_model: str = "models/hand_landmarker.task",
+    telemetry: PerformanceTelemetry | None = None,
 ) -> None:
     try:
         import cv2
@@ -161,9 +195,11 @@ def run_camera(
     frame_times: deque[float] = deque(maxlen=30)
     last_observation_ms: int | None = None
     frame_count = 0
+    telemetry = telemetry or PerformanceTelemetry()
     try:
         for frame, timestamp_ms in frames(camera_index):
             frame_count += 1
+            telemetry.record_frame(timestamp_ms)
             frame_times.append(monotonic())
             observations = tracker.process(frame, timestamp_ms)
             if observations:
@@ -178,7 +214,9 @@ def run_camera(
                 prior = previous.get(observation.handedness)
                 feature = extract_features(observation, prior)
                 previous[observation.handedness] = feature
-                runtime.handle_features(feature)
+                telemetry.record_hand()
+                for _ in range(runtime.handle_features(feature)):
+                    telemetry.record_gesture(feature.timestamp_ms)
             frame = draw_landmarks(frame, observations)
             elapsed = frame_times[-1] - frame_times[0] if len(frame_times) > 1 else 0.0
             fps = (len(frame_times) - 1) / elapsed if elapsed > 0 else 0.0
@@ -246,6 +284,12 @@ def main(argv: list[str] | None = None) -> int:
         default=10.0,
         help="recording duration for --record",
     )
+    parser.add_argument(
+        "--telemetry-json",
+        default=None,
+        metavar="PATH",
+        help="save end-of-session performance telemetry as JSON",
+    )
     args = parser.parse_args(argv)
     if args.diagnostics:
         print(render_diagnostics(collect_diagnostics(args.hand_model)))
@@ -294,16 +338,26 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--soundfont is required with --output standalone")
         output = FluidSynthOutput(soundfont)
     runtime, output = default_runtime(output, preset)
+    telemetry = PerformanceTelemetry()
     try:
-        if args.dry_run:
-            print("SammyBlaze.wav dry-run ready: C major -> A minor -> F major -> G major")
+        with _shutdown_guard(runtime):
+            if args.dry_run:
+                print("SammyBlaze.wav dry-run ready: C major -> A minor -> F major -> G major")
+                return 0
+            run_camera(
+                runtime,
+                camera_index,
+                max_frames=args.max_frames,
+                hand_model=args.hand_model,
+                telemetry=telemetry,
+            )
             return 0
-        run_camera(
-            runtime,
-            camera_index,
-            max_frames=args.max_frames,
-            hand_model=args.hand_model,
-        )
-        return 0
     finally:
-        runtime.close()
+        try:
+            runtime.close()
+        finally:
+            if telemetry.frames_seen:
+                snapshot = telemetry.snapshot()
+                print(render_telemetry(snapshot))
+                if args.telemetry_json:
+                    save_telemetry(args.telemetry_json, snapshot)

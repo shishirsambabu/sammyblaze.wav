@@ -63,6 +63,8 @@ The first launch should be done with `--dry-run` or a null output. Hardware adap
 
 When reporting a machine-specific issue, run `python -m handmusic --diagnostics` from the project environment and attach the text output. The command does not open the camera, MIDI port, or synthesizer.
 
+Camera sessions print frame age, dropped-frame, and gesture-latency telemetry on exit. Add `--telemetry-json path/to/session-telemetry.json` to save the bounded report for later review.
+
 ## Development principles
 
 - The live path is local and must not depend on an LLM or the internet.

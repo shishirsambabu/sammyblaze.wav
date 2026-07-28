@@ -21,3 +21,15 @@ def test_stop_all_is_idempotent_and_cleans_everything() -> None:
     manager.stop_all()
     assert manager.active_notes == set()
     assert sink.messages.count(("note_off", 60, None)) == 1
+
+
+def test_close_is_idempotent_and_releases_notes_once() -> None:
+    sink = MemoryMidiOutput()
+    manager = NoteManager(sink)
+    manager.play_chord((60, 64))
+
+    manager.close()
+    manager.close()
+
+    assert manager.active_notes == set()
+    assert sink.messages.count(("note_off", 60, None)) == 1

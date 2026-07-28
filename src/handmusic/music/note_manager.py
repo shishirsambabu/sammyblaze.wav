@@ -21,8 +21,11 @@ class NoteManager:
     def __init__(self, sink: NoteSink) -> None:
         self.sink = sink
         self.active_notes: set[int] = set()
+        self._closed = False
 
     def play_chord(self, notes: tuple[int, ...], velocity: int = 96) -> None:
+        if self._closed:
+            raise RuntimeError("note manager is closed")
         velocity = _midi(velocity)
         self.stop_all()
         for note in notes:
@@ -31,6 +34,8 @@ class NoteManager:
             self.active_notes.add(note)
 
     def control_change(self, control: int, value: int) -> None:
+        if self._closed:
+            raise RuntimeError("note manager is closed")
         self.sink.control_change(_midi(control), _midi(value))
 
     def stop_all(self) -> None:
@@ -39,6 +44,9 @@ class NoteManager:
         self.active_notes.clear()
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self.stop_all()
         close = getattr(self.sink, "close", None)
         if close is not None:
