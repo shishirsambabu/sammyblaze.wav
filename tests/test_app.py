@@ -42,3 +42,12 @@ def test_runtime_swipe_changes_chord_and_retriggers_notes() -> None:
         ("note_on", 72, 96),
         ("note_on", 76, 96),
     ]
+
+
+def test_runtime_emits_right_hand_expression_controls() -> None:
+    runtime, output = default_runtime()
+    runtime.handle_features(
+        GestureFeatures("right", (False,) * 5, 1.0, 0, 0.25, 0.25, 0, 0, 0, 0.95, 0)
+    )
+    assert ("cc", 11, 95) in output.messages
+    assert ("cc", 10, 32) in output.messages

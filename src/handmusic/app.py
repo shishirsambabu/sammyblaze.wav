@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import monotonic
 
 from handmusic.common.events import GestureKind
@@ -10,6 +10,7 @@ from handmusic.common.models import GestureFeatures
 from handmusic.gestures.features import extract_features
 from handmusic.gestures.state_machine import GestureStateMachine
 from handmusic.music.chord_engine import ChordSpec
+from handmusic.music.expression import ExpressionController
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput
 from handmusic.music.note_manager import NoteManager
 from handmusic.music.progression import Progression
@@ -27,6 +28,7 @@ class InstrumentRuntime:
     armed: bool = False
     arpeggiator_enabled: bool = False
     last_gesture: str = GestureKind.NO_GESTURE.value
+    expression: ExpressionController = field(default_factory=ExpressionController)
 
     @property
     def chord_label(self) -> str:
@@ -34,6 +36,8 @@ class InstrumentRuntime:
         return f"{chord.root} {chord.quality}"
 
     def handle_features(self, features: GestureFeatures) -> None:
+        for control, value in self.expression.controls(features):
+            self.notes.control_change(control, value)
         for event in self.gestures.process(features):
             self.last_gesture = event.kind.value
             if event.kind is GestureKind.ARM:

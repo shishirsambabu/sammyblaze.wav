@@ -12,9 +12,9 @@ Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/c
 
 Exit criteria: open palm arms, swipes navigate `C-Am-F-G`, fist/`Esc` stop, tracking loss stops notes, and output routing/chord state is visible. The current implementation covers the local runtime path and in-memory validation; physical MIDI smoke testing remains environment-dependent.
 
-## Phase 3 — expression and standalone audio
+## Phase 3 — expression and standalone audio (in progress)
 
-Exit criteria: vertical/horizontal movement controls bounded CC values, and a SoundFont adapter plays without a DAW.
+Exit criteria: vertical/horizontal movement controls smoothed bounded CC values, and a SoundFont adapter plays without a DAW. The current implementation covers expression mapping and adapter hardening; physical FluidSynth verification remains environment-dependent.
 
 ## Phase 4 — calibration and presets
 
