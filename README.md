@@ -26,6 +26,7 @@ The default progression is `C major -> A minor -> F major -> G major`.
 - `docs/ROADMAP.md`: staged delivery plan with exit criteria
 - `docs/PHASE_4_CALIBRATION.md`: calibration and preset workflow
 - `docs/PHASE_5_DATA_ML.md`: consented feature recording and ML protocol
+- `docs/PHASE_6_RELEASE.md`: performer support, QA, and release gates
 - `agents/registry.yaml`: AI/ML team roster, ownership, dependencies, and gates
 - `agents/`: role-specific operating prompts for parallel subagents
 - `src/handmusic/`: deterministic core and optional hardware adapters
@@ -40,6 +41,7 @@ python -m venv .venv
 python -m pip install -e ".[dev]"
 python -m pytest
 python -m handmusic --dry-run
+python -m handmusic --diagnostics
 ```
 
 For camera/MIDI development, install the optional runtime extras:
@@ -49,7 +51,7 @@ python -m pip install -e ".[vision,midi,audio,ui]"
 python -m handmusic --camera 0 --output midi
 ```
 
-The `midi` extra provides the pure-Python Mido API. Install `.[midi-native]` separately when you have a C++ build toolchain and need the RtMidi hardware backend.
+The `midi` extra provides the pure-Python Mido API. The `midi-native` extra includes both Mido and the RtMidi hardware backend, so use it when you have a native MIDI toolchain.
 
 If the machine does not have a compiled RtMidi backend yet, use camera-only diagnostics:
 
@@ -58,6 +60,8 @@ python -m handmusic --camera 0 --output null
 ```
 
 The first launch should be done with `--dry-run` or a null output. Hardware adapters are optional so the core can be tested on every machine and in CI. For standalone audio, pass `--output standalone --soundfont path/to/file.sf2`.
+
+When reporting a machine-specific issue, run `python -m handmusic --diagnostics` from the project environment and attach the text output. The command does not open the camera, MIDI port, or synthesizer.
 
 ## Development principles
 

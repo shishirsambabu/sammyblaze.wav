@@ -27,3 +27,5 @@ Exit criteria: consented sessions are recorded, labeled, quality-checked, sessio
 ## Phase 6 — performer product
 
 Exit criteria: desktop UI, installer, diagnostics, crash-safe note cleanup, performance telemetry, documentation, and release checklist are complete.
+
+The current implementation establishes the support-safe diagnostics command, deterministic CI release gate, and performer QA/release runbook. Desktop UI, signed installer packaging, and live performance telemetry remain the next Phase 6 slices.

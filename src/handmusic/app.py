@@ -9,6 +9,7 @@ from time import monotonic
 from handmusic.calibration import CalibrationSession, PerformerPreset, PresetStore
 from handmusic.common.events import GestureKind
 from handmusic.common.models import GestureFeatures
+from handmusic.diagnostics import collect_diagnostics, render_diagnostics
 from handmusic.gestures.features import extract_features
 from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
 from handmusic.ml.session import record_camera_session
@@ -204,6 +205,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run", action="store_true", help="start without camera or external output"
     )
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="print a support-safe environment report without opening hardware",
+    )
     parser.add_argument("--camera", type=int, default=None)
     parser.add_argument("--output", choices=("midi", "standalone", "null"), default="midi")
     parser.add_argument("--midi-port", default=None, help="MIDI output port name")
@@ -241,6 +247,9 @@ def main(argv: list[str] | None = None) -> int:
         help="recording duration for --record",
     )
     args = parser.parse_args(argv)
+    if args.diagnostics:
+        print(render_diagnostics(collect_diagnostics(args.hand_model)))
+        return 0
     preset = PresetStore.load(args.preset) if args.preset else None
     camera_index = (
         args.camera if args.camera is not None else (preset.camera_index if preset else 0)
