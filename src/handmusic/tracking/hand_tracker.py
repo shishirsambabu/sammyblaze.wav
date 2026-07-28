@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from handmusic.common.models import HandObservation, Point3D
@@ -11,6 +12,7 @@ class TrackerConfig:
     max_hands: int = 2
     min_detection_confidence: float = 0.7
     min_tracking_confidence: float = 0.7
+    model_path: str = "models/hand_landmarker.task"
 
 
 class MediaPipeHandTracker:
@@ -23,27 +25,61 @@ class MediaPipeHandTracker:
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise RuntimeError("Install the [vision] extra to use camera tracking") from exc
         self._mp = mp
-        self._hands = mp.solutions.hands.Hands(
-            static_image_mode=False,
-            max_num_hands=self.config.max_hands,
-            min_detection_confidence=self.config.min_detection_confidence,
-            min_tracking_confidence=self.config.min_tracking_confidence,
-        )
+        if hasattr(mp, "solutions"):
+            self._mode = "legacy"
+            self._hands = mp.solutions.hands.Hands(
+                static_image_mode=False,
+                max_num_hands=self.config.max_hands,
+                min_detection_confidence=self.config.min_detection_confidence,
+                min_tracking_confidence=self.config.min_tracking_confidence,
+            )
+        else:
+            model_path = Path(self.config.model_path)
+            if not model_path.is_file():
+                raise RuntimeError(
+                    "MediaPipe Tasks API requires a hand_landmarker.task model. "
+                    f"Download it to {model_path} or pass --hand-model."
+                )
+            self._mode = "tasks"
+            base_options = mp.tasks.BaseOptions(model_asset_path=str(model_path))
+            options = mp.tasks.vision.HandLandmarkerOptions(
+                base_options=base_options,
+                running_mode=mp.tasks.vision.RunningMode.VIDEO,
+                num_hands=self.config.max_hands,
+                min_hand_detection_confidence=self.config.min_detection_confidence,
+                min_hand_presence_confidence=self.config.min_tracking_confidence,
+                min_tracking_confidence=self.config.min_tracking_confidence,
+            )
+            try:
+                self._hands = mp.tasks.vision.HandLandmarker.create_from_options(options)
+            except OSError as exc:  # pragma: no cover - depends on host policy
+                raise RuntimeError(
+                    "Windows blocked MediaPipe's native runtime. Allow the mediapipe "
+                    "shared library in App Control or run on a supported Python environment."
+                ) from exc
 
     def process(self, frame: Any, timestamp_ms: int) -> list[HandObservation]:
-        rgb = frame[:, :, ::-1]
-        result = self._hands.process(rgb)
+        rgb = frame[:, :, ::-1].copy()
+        if self._mode == "legacy":
+            result = self._hands.process(rgb)
+            handedness_results = [item.classification for item in (result.multi_handedness or [])]
+            landmark_results = result.multi_hand_landmarks or []
+        else:
+            image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
+            result = self._hands.detect_for_video(image, timestamp_ms)
+            handedness_results = result.handedness or []
+            landmark_results = result.hand_landmarks or []
         observations: list[HandObservation] = []
-        for index, hand_landmarks in enumerate(result.multi_hand_landmarks or []):
+        for index, hand_landmarks in enumerate(landmark_results):
             label = "unknown"
-            if result.multi_handedness and index < len(result.multi_handedness):
-                label = result.multi_handedness[index].classification[0].label.lower()
-            landmarks = tuple(
-                Point3D(point.x, point.y, point.z) for point in hand_landmarks.landmark
-            )
+            if index < len(handedness_results):
+                category = handedness_results[index][0]
+                label = (category.category_name or "unknown").lower()
+            points = hand_landmarks.landmark if self._mode == "legacy" else hand_landmarks
+            landmarks = tuple(Point3D(point.x, point.y, point.z) for point in points)
             confidence = 0.0
-            if result.multi_handedness and index < len(result.multi_handedness):
-                confidence = result.multi_handedness[index].classification[0].score
+            if index < len(handedness_results):
+                confidence = handedness_results[index][0].score
             observations.append(HandObservation(label, landmarks, confidence, timestamp_ms))
         return observations
 

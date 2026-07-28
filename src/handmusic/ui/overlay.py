@@ -56,7 +56,15 @@ def draw_landmarks(frame: Any, observations: list[HandObservation]) -> Any:
     return frame
 
 
-def draw_status(frame: Any, *, armed: bool, gesture: str, fps: float, hands: int = 0) -> Any:
+def draw_status(
+    frame: Any,
+    *,
+    armed: bool,
+    gesture: str,
+    chord: str,
+    fps: float,
+    hands: int = 0,
+) -> Any:
     """Draw a minimal status overlay when OpenCV is available."""
     try:
         import cv2
@@ -65,7 +73,7 @@ def draw_status(frame: Any, *, armed: bool, gesture: str, fps: float, hands: int
     color = (50, 220, 50) if armed else (80, 80, 220)
     cv2.putText(
         frame,
-        f"{'ARMED' if armed else 'DISARMED'} | {gesture} | {hands} hands | {fps:.1f} FPS",
+        f"{'ARMED' if armed else 'DISARMED'} | {chord} | {gesture} | {hands} hands | {fps:.1f} FPS",
         (20, 32),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,

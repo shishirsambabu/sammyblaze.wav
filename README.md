@@ -47,6 +47,14 @@ python -m pip install -e ".[vision,midi,audio,ui]"
 python -m handmusic --camera 0 --output midi
 ```
 
+The `midi` extra provides the pure-Python Mido API. Install `.[midi-native]` separately when you have a C++ build toolchain and need the RtMidi hardware backend.
+
+If the machine does not have a compiled RtMidi backend yet, use camera-only diagnostics:
+
+```powershell
+python -m handmusic --camera 0 --output null
+```
+
 The first launch should be done with `--dry-run` or a null output. Hardware adapters are optional so the core can be tested on every machine and in CI. For standalone audio, pass `--output standalone --soundfont path/to/file.sf2`.
 
 ## Development principles

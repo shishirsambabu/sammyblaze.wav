@@ -8,9 +8,9 @@ Exit criteria: repository rules, contracts, deterministic chord engine, note cle
 
 Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/confidence/FPS are overlaid, and clean shutdown works. The current implementation includes a bounded latest-frame capture path and hardware-independent queue tests; physical webcam verification remains an opt-in smoke test.
 
-## Phase 2 — playable progression
+## Phase 2 — playable progression (in progress)
 
-Exit criteria: open palm arms, swipes navigate `C-Am-F-G`, fist/`Esc` stop, and output routing is visible.
+Exit criteria: open palm arms, swipes navigate `C-Am-F-G`, fist/`Esc` stop, tracking loss stops notes, and output routing/chord state is visible. The current implementation covers the local runtime path and in-memory validation; physical MIDI smoke testing remains environment-dependent.
 
 ## Phase 3 — expression and standalone audio
 

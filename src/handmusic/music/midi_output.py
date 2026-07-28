@@ -28,7 +28,13 @@ class MidoOutput:
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise RuntimeError("Install the [midi] extra to use MIDI output") from exc
         self._mido = mido
-        self._port = mido.open_output(port_name)
+        try:
+            self._port = mido.open_output(port_name)
+        except ModuleNotFoundError as exc:  # pragma: no cover - depends on environment
+            raise RuntimeError(
+                "MIDI backend unavailable. Install the [midi-native] extra with a C++ build toolchain "
+                "or run camera diagnostics with --output null."
+            ) from exc
 
     def note_on(self, note: int, velocity: int) -> None:
         self._port.send(self._mido.Message("note_on", note=note, velocity=velocity))
