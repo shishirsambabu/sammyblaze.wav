@@ -56,6 +56,7 @@ class MediaPipeHandTracker:
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise RuntimeError("Install the [vision] extra to use camera tracking") from exc
         self._mp = mp
+        self._last_timestamp_ms: int | None = None
         if hasattr(mp, "solutions"):
             self._mode = "legacy"
             self._hands = mp.solutions.hands.Hands(
@@ -99,6 +100,7 @@ class MediaPipeHandTracker:
             handedness_results = [item.classification for item in (result.multi_handedness or [])]
             landmark_results = result.multi_hand_landmarks or []
         else:
+            timestamp_ms = self._next_timestamp(timestamp_ms)
             image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
             result = self._hands.detect_for_video(image, timestamp_ms)
             handedness_results = result.handedness or []
@@ -116,6 +118,14 @@ class MediaPipeHandTracker:
                 confidence = handedness_results[index][0].score
             observations.append(HandObservation(label, landmarks, confidence, timestamp_ms))
         return observations
+
+    def _next_timestamp(self, timestamp_ms: int) -> int:
+        """Guarantee the strict timestamp contract required by Tasks VIDEO mode."""
+
+        if self._last_timestamp_ms is not None and timestamp_ms <= self._last_timestamp_ms:
+            timestamp_ms = self._last_timestamp_ms + 1
+        self._last_timestamp_ms = timestamp_ms
+        return timestamp_ms
 
     def close(self) -> None:
         self._hands.close()
