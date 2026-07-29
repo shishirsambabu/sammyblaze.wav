@@ -10,6 +10,8 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -26,6 +28,7 @@ DEFAULT_BLOCK_SIZE: Final = 256
 DEFAULT_EVENT_QUEUE_SIZE: Final = 512
 DEFAULT_REPORT_QUEUE_SIZE: Final = 64
 DEFAULT_MAX_EVENTS_PER_CALLBACK: Final = 128
+DEFAULT_TIMING_RING_CAPACITY: Final = 65_536
 STEREO_CHANNELS: Final = 2
 _STATUS_NAMES: Final = {
     -3: "render failed",
@@ -47,6 +50,22 @@ _SYMBOL_PREFIXES: Final = (
     "sammyblaze_core_",
     "audio_core_",
 )
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 class SammyBlazeAudioPatchV1(ctypes.Structure):
@@ -100,6 +119,12 @@ class NativeAudioCallbackHealth:
     unison_quality_limited: bool | None
     abi_version: int
     library_path: str
+    requested_output_device: int | str | None
+    output_device_index: int | None
+    output_device_name: str | None
+    output_host_api: str | None
+    sample_rate: float
+    block_size: int
 
     @property
     def healthy(self) -> bool:
@@ -109,6 +134,28 @@ class NativeAudioCallbackHealth:
             or self.nonfinite_recoveries
             or self.event_queue_overflows
         )
+
+
+@dataclass(frozen=True, slots=True)
+class NativeAudioCallbackTiming:
+    """Post-stop callback-duration snapshot from the preallocated timing ring."""
+
+    sample_count: int
+    retained_sample_count: int
+    overwritten_sample_count: int
+    ring_capacity: int
+    audio_deadline_ms: float
+    deadline_miss_count: int
+    p50_ms: float | None
+    p95_ms: float | None
+    p99_ms: float | None
+    max_ms: float | None
+
+    @property
+    def p95_deadline_ratio(self) -> float | None:
+        if self.p95_ms is None:
+            return None
+        return self.p95_ms / self.audio_deadline_ms
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,9 +463,12 @@ class NativeAudioCoreOutput:
         *,
         dll_path: str | os.PathLike[str] | None = None,
         sample_rate: float | None = None,
+        device: int | str | None = None,
         event_queue_size: int = DEFAULT_EVENT_QUEUE_SIZE,
         report_queue_size: int = DEFAULT_REPORT_QUEUE_SIZE,
         max_events_per_callback: int = DEFAULT_MAX_EVENTS_PER_CALLBACK,
+        timing_ring_capacity: int = DEFAULT_TIMING_RING_CAPACITY,
+        callback_clock_ns: Callable[[], int] | None = None,
         library: object | None = None,
         sounddevice_module: object | None = None,
     ) -> None:
@@ -442,6 +492,21 @@ class NativeAudioCoreOutput:
             or max_events_per_callback <= 0
         ):
             raise ValueError("max_events_per_callback must be a positive integer")
+        if (
+            isinstance(timing_ring_capacity, bool)
+            or not isinstance(timing_ring_capacity, int)
+            or timing_ring_capacity <= 0
+        ):
+            raise ValueError("timing_ring_capacity must be a positive integer")
+        if isinstance(device, bool) or (
+            device is not None
+            and (
+                not isinstance(device, (int, str))
+                or (isinstance(device, int) and device < 0)
+                or (isinstance(device, str) and not device.strip())
+            )
+        ):
+            raise ValueError("device must be a non-negative index, non-empty name, or None")
         get_preset(program)
 
         self._events: Queue[tuple[str, object, object | None]] = Queue(
@@ -469,6 +534,16 @@ class NativeAudioCoreOutput:
         self._closed = False
         self._stream: Any | None = None
         self._handle = ctypes.c_void_p()
+        self.output_device = device
+        self._callback_clock_ns = callback_clock_ns or time.perf_counter_ns
+        self._callback_timing_ring = (ctypes.c_uint64 * timing_ring_capacity)()
+        self._callback_timing_capacity = timing_ring_capacity
+        self._callback_timing_write_count = 0
+        self._callback_deadline_miss_count = 0
+        self._callback_timing_max_ns = 0
+        self.output_device_index: int | None = None
+        self.output_device_name: str | None = None
+        self.output_host_api: str | None = None
 
         if library is None:
             loaded_library, api, loaded_path = load_native_audio_core(dll_path)
@@ -489,12 +564,25 @@ class NativeAudioCoreOutput:
                 ) from exc
 
         try:
+            device_info = sounddevice_module.query_devices(
+                device=self.output_device,
+                kind="output",
+            )
+            self.output_device_index = _optional_int(device_info.get("index"))
+            self.output_device_name = _optional_text(device_info.get("name"))
+            host_api_index = _optional_int(device_info.get("hostapi"))
+            query_host_apis = getattr(sounddevice_module, "query_hostapis", None)
+            if query_host_apis is not None and host_api_index is not None:
+                host_api = query_host_apis(host_api_index)
+                self.output_host_api = _optional_text(host_api.get("name"))
             if sample_rate is None:
-                device = sounddevice_module.query_devices(kind="output")
-                sample_rate = float(device["default_samplerate"])
+                sample_rate = float(device_info["default_samplerate"])
             if not np.isfinite(sample_rate) or sample_rate <= 0:
                 raise ValueError("sample_rate must be positive and finite")
             self.sample_rate = float(sample_rate)
+            self._callback_deadline_ns = int(
+                (self._max_block_size / self.sample_rate) * 1_000_000_000
+            )
             created_handle = self._api.create(self.sample_rate, self._max_block_size)
             self._handle = (
                 created_handle
@@ -514,9 +602,11 @@ class NativeAudioCoreOutput:
                 dtype="float32",
                 latency="low",
                 callback=self._callback,
+                device=self.output_device,
             )
             self._stream.start()
         except Exception as exc:
+            self._close_failed_stream()
             self._destroy_native_handle()
             raise RuntimeError(f"Could not start the native audio output: {exc}") from exc
 
@@ -539,6 +629,12 @@ class NativeAudioCoreOutput:
             unison_quality_limited=self._unison_quality_limited,
             abi_version=AUDIO_CORE_ABI_VERSION,
             library_path=self.library_path,
+            requested_output_device=self.output_device,
+            output_device_index=self.output_device_index,
+            output_device_name=self.output_device_name,
+            output_host_api=self.output_host_api,
+            sample_rate=self.sample_rate,
+            block_size=self._max_block_size,
         )
 
     def drain_callback_reports(self) -> tuple[str, ...]:
@@ -548,6 +644,33 @@ class NativeAudioCoreOutput:
                 reports.append(self._callback_reports.get_nowait())
             except Empty:
                 return tuple(reports)
+
+    def callback_timing_snapshot(self) -> NativeAudioCallbackTiming:
+        """Copy and summarize callback timings outside the real-time callback."""
+
+        total = self._callback_timing_write_count
+        retained = min(total, self._callback_timing_capacity)
+        values = [
+            int(self._callback_timing_ring[index])
+            for index in range(retained)
+        ]
+        values.sort()
+        return NativeAudioCallbackTiming(
+            sample_count=total,
+            retained_sample_count=retained,
+            overwritten_sample_count=max(0, total - retained),
+            ring_capacity=self._callback_timing_capacity,
+            audio_deadline_ms=self._callback_deadline_ns / 1_000_000.0,
+            deadline_miss_count=self._callback_deadline_miss_count,
+            p50_ms=self._percentile_ms(values, 0.50),
+            p95_ms=self._percentile_ms(values, 0.95),
+            p99_ms=self._percentile_ms(values, 0.99),
+            max_ms=(
+                self._callback_timing_max_ns / 1_000_000.0
+                if total
+                else None
+            ),
+        )
 
     def note_on(self, note: int, velocity: int) -> None:
         self._validate_midi(note)
@@ -625,6 +748,30 @@ class NativeAudioCoreOutput:
             )
 
     def _callback(
+        self,
+        output: np.ndarray,
+        frame_count: int,
+        _time: object,
+        status: object,
+    ) -> None:
+        started_ns = self._callback_clock_ns()
+        try:
+            self._render_callback(output, frame_count, _time, status)
+        finally:
+            elapsed_ns = self._callback_clock_ns() - started_ns
+            if elapsed_ns < 0:
+                elapsed_ns = 0
+            write_count = self._callback_timing_write_count
+            self._callback_timing_ring[
+                write_count % self._callback_timing_capacity
+            ] = elapsed_ns
+            self._callback_timing_write_count = write_count + 1
+            if elapsed_ns > self._callback_timing_max_ns:
+                self._callback_timing_max_ns = elapsed_ns
+            if elapsed_ns > self._callback_deadline_ns:
+                self._callback_deadline_miss_count += 1
+
+    def _render_callback(
         self,
         output: np.ndarray,
         frame_count: int,
@@ -806,6 +953,31 @@ class NativeAudioCoreOutput:
         except Exception as exc:
             self._report(f"Native audio destroy failed: {type(exc).__name__}: {exc}")
 
+    def _close_failed_stream(self) -> None:
+        stream = self._stream
+        self._stream = None
+        if stream is None:
+            return
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _percentile_ms(values: list[int], quantile: float) -> float | None:
+        if not values:
+            return None
+        if len(values) == 1:
+            return values[0] / 1_000_000.0
+        position = (len(values) - 1) * quantile
+        lower_index = int(position)
+        upper_index = min(lower_index + 1, len(values) - 1)
+        fraction = position - lower_index
+        value = values[lower_index] + (
+            values[upper_index] - values[lower_index]
+        ) * fraction
+        return value / 1_000_000.0
+
     @staticmethod
     def _check_status(operation: str, status: int) -> None:
         status_code = int(status)
@@ -824,7 +996,9 @@ class NativeAudioCoreOutput:
 
 __all__ = [
     "AUDIO_CORE_ABI_VERSION",
+    "DEFAULT_TIMING_RING_CAPACITY",
     "NativeAudioCallbackHealth",
+    "NativeAudioCallbackTiming",
     "NativeAudioCoreBindings",
     "NativeAudioCoreOutput",
     "SammyBlazeAudioPatchV1",

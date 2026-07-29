@@ -165,9 +165,10 @@ class _FakeStream:
 class _FakeSoundDevice:
     def __init__(self) -> None:
         self.streams: list[_FakeStream] = []
+        self.query_calls: list[dict[str, object]] = []
 
-    @staticmethod
-    def query_devices(**_kwargs: object) -> dict[str, float]:
+    def query_devices(self, **kwargs: object) -> dict[str, float]:
+        self.query_calls.append(kwargs)
         return {"default_samplerate": 48_000.0}
 
     def OutputStream(self, **kwargs: object) -> _FakeStream:  # noqa: N802
@@ -339,6 +340,65 @@ def test_phase9_2_output_dispatches_note_sink_events_and_renders_interleaved() -
     assert sounddevice.streams[0].stopped
     assert sounddevice.streams[0].closed
     assert [call[0] for call in state.calls].count("destroy") == 1
+
+
+def test_phase9_4_output_forwards_selected_device_to_query_and_stream() -> None:
+    state = _FakeNativeState()
+    sounddevice = _FakeSoundDevice()
+
+    output = NativeAudioCoreOutput(
+        library=_fake_library(state),
+        sounddevice_module=sounddevice,
+        block_size=64,
+        device="ASIO Studio Output",
+    )
+
+    assert sounddevice.query_calls == [
+        {"device": "ASIO Studio Output", "kind": "output"}
+    ]
+    assert sounddevice.streams[0].kwargs["device"] == "ASIO Studio Output"
+    assert output.output_device == "ASIO Studio Output"
+    output.close()
+
+
+def test_phase9_4_callback_timing_ring_is_bounded_and_reports_percentiles() -> None:
+    timestamps = iter(
+        (
+            0,
+            1_000_000,
+            2_000_000,
+            4_000_000,
+            5_000_000,
+            8_000_000,
+            9_000_000,
+            20_000_000,
+        )
+    )
+    output, _state, _sounddevice = _output(
+        block_size=480,
+        sample_rate=48_000.0,
+        timing_ring_capacity=3,
+        callback_clock_ns=lambda: next(timestamps),
+    )
+    block = np.empty((480, 2), dtype=np.float32)
+
+    for _ in range(4):
+        output._callback(block, 480, None, None)
+
+    output.close()
+    timing = output.callback_timing_snapshot()
+    assert timing.sample_count == 4
+    assert timing.retained_sample_count == 3
+    assert timing.overwritten_sample_count == 1
+    assert timing.ring_capacity == 3
+    assert timing.audio_deadline_ms == pytest.approx(10.0)
+    assert timing.deadline_miss_count == 1
+    assert timing.p50_ms == pytest.approx(3.0)
+    assert timing.p95_ms == pytest.approx(10.2)
+    assert timing.p99_ms == pytest.approx(10.84)
+    assert timing.max_ms == pytest.approx(11.0)
+    assert timing.p95_deadline_ratio == pytest.approx(1.02)
+    assert output.callback_health.requested_unison_voices is None
 
 
 def test_phase9_2_callback_reports_status_and_native_recoveries() -> None:
