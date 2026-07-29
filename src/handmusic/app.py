@@ -48,7 +48,7 @@ from handmusic.telemetry import (
     render_telemetry,
     save_telemetry,
 )
-from handmusic.tracking.camera import frames
+from handmusic.tracking.camera import CameraHealthSnapshot, frames
 from handmusic.tracking.hand_tracker import MediaPipeHandTracker
 from handmusic.ui.overlay import draw_landmarks, draw_status
 
@@ -379,6 +379,7 @@ def run_camera(
     state_callback: Callable[[str], None] | None = None,
     expression_callback: Callable[[ExpressionState], None] | None = None,
     transport_callback: Callable[[TransportSnapshot], None] | None = None,
+    camera_health_callback: Callable[[CameraHealthSnapshot], None] | None = None,
     display: bool = True,
 ) -> None:
     if stop_event is not None and stop_event.is_set():
@@ -402,7 +403,10 @@ def run_camera(
     try:
         if stop_event is not None and stop_event.is_set():
             return
-        for frame, timestamp_ms in frames(camera_index, stop_event=stop_event):
+        frame_kwargs: dict[str, object] = {"stop_event": stop_event}
+        if camera_health_callback is not None:
+            frame_kwargs["health_callback"] = camera_health_callback
+        for frame, timestamp_ms in frames(camera_index, **frame_kwargs):
             if stop_event is not None and stop_event.is_set():
                 break
             frame_count += 1

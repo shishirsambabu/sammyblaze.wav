@@ -14,6 +14,7 @@ import handmusic.ui.desktop as desktop_module
 from handmusic.app import default_runtime
 from handmusic.music.presets import get_preset
 from handmusic.music.user_presets import load_user_preset
+from handmusic.tracking.camera import CameraHealthSnapshot
 from handmusic.ui.desktop import PerformerWindow, SessionWorker
 
 
@@ -149,6 +150,40 @@ def test_audio_backend_is_visible_on_perform_page(
     )
     application.processEvents()
     assert window.metric_audio.value_text == "PYTHON FALLBACK"
+    window.close()
+
+
+def test_camera_recovery_is_visible_on_perform_page(
+    application: QApplication,
+    tmp_path,
+) -> None:
+    window = PerformerWindow(preset_directory=tmp_path)
+
+    window._set_camera_health("Camera: recovering...")
+    application.processEvents()
+    assert window.camera_badge.text() == "CAMERA RECOVERING"
+
+    window._set_camera_health("Camera: recovered (recovery 1) via DirectShow")
+    application.processEvents()
+    assert window.camera_badge.text() == "CAMERA ON"
+
+    window._set_camera_health("Camera recovery failed")
+    application.processEvents()
+    assert window.camera_badge.text() == "CAMERA ERROR"
+
+    worker = SessionWorker(camera_index=0, output_mode="null", midi_port=None)
+    messages: list[str] = []
+    worker.camera_health.connect(messages.append)
+    worker._publish_camera_health(
+        CameraHealthSnapshot(
+            camera_index=0,
+            state="recovered",
+            generation=2,
+            backend="DirectShow",
+        )
+    )
+    application.processEvents()
+    assert messages == ["Camera: recovered (recovery 2) via DirectShow"]
     window.close()
 
 

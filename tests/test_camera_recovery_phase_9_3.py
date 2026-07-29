@@ -19,9 +19,11 @@ class ScriptedCapture:
         responses: Iterable[tuple[bool, Any | None]] = (),
         *,
         opened: bool = True,
+        default_response: tuple[bool, Any | None] | None = None,
     ) -> None:
         self.opened = opened
         self.responses = deque(responses)
+        self.default_response = default_response
         self.released = Event()
         self.read_entered = Event()
         self._lock = Lock()
@@ -40,6 +42,8 @@ class ScriptedCapture:
             self.read_count += 1
             if self.responses:
                 return self.responses.popleft()
+            if self.default_response is not None:
+                return self.default_response
         self.released.wait(timeout=1.0)
         return False, None
 
@@ -150,6 +154,74 @@ def test_failed_capture_reopens_and_publishes_new_generation(
 
     assert not stream.worker_alive
     assert recovered.release_count == 1
+
+
+def test_forced_hardware_recovery_reopens_and_publishes_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = ScriptedCapture(
+        [(True, "startup")],
+        default_response=(True, "live"),
+    )
+    recovered = ScriptedCapture(
+        [(True, "recovered")],
+        default_response=(True, "after-recovery"),
+    )
+    captures = deque([original, recovered])
+    health: list[camera_module.CameraHealthSnapshot] = []
+
+    install_fake_cv2(monkeypatch, lambda _index, _backend: captures.popleft())
+    stream = camera_module.CameraStream(
+        0,
+        open_timeout_s=0.1,
+        recovery_timeout_s=0.3,
+        recovery_attempts=2,
+        read_failure_retries=0,
+        health_callback=health.append,
+    )
+    try:
+        stream.request_recovery()
+        wait_until(lambda: stream.generation == 1)
+        assert [snapshot.state for snapshot in health] == [
+            "opening",
+            "running",
+            "recovering",
+            "recovered",
+        ]
+        assert health[-1].generation == 1
+        assert health[-1].backend == "automatic"
+        assert stream.terminal_error is None
+    finally:
+        stream.close()
+
+    assert health[-1].state == "stopped"
+    assert original.release_count == 1
+    assert recovered.release_count == 1
+
+
+def test_health_callback_failure_cannot_stop_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capture = ScriptedCapture(
+        [(True, "startup")],
+        default_response=(True, "live"),
+    )
+    install_fake_cv2(monkeypatch, lambda _index, _backend: capture)
+
+    def broken_callback(_snapshot: camera_module.CameraHealthSnapshot) -> None:
+        raise RuntimeError("observer failed")
+
+    stream = camera_module.CameraStream(
+        0,
+        open_timeout_s=0.1,
+        health_callback=broken_callback,
+    )
+    try:
+        frame, _timestamp = next(iter(stream))
+        assert frame in {"startup", "live"}
+        assert stream.worker_alive
+    finally:
+        stream.close()
 
 
 def test_permanent_failure_is_bounded_and_wakes_consumer(

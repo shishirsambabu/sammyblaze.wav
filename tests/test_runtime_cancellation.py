@@ -61,3 +61,45 @@ def test_run_camera_passes_cancellation_to_camera_stream(monkeypatch) -> None:
 
     assert received_stop_event is stop_event
     assert tracker_closed is True
+
+
+def test_run_camera_passes_camera_health_observer(monkeypatch) -> None:
+    stop_event = Event()
+    received_callback = None
+
+    class FakeTracker:
+        def __init__(self, _config) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    def health_observer(_snapshot: object) -> None:
+        pass
+
+    def fake_frames(
+        _camera_index: int,
+        *,
+        stop_event: Event | None = None,
+        health_callback=None,
+    ):
+        nonlocal received_callback
+        received_callback = health_callback
+        assert stop_event is not None
+        stop_event.set()
+        if False:
+            yield object(), 0
+
+    monkeypatch.setattr(app_module, "MediaPipeHandTracker", FakeTracker)
+    monkeypatch.setattr(app_module, "frames", fake_frames)
+    runtime, _output = default_runtime()
+
+    run_camera(
+        runtime,
+        0,
+        stop_event=stop_event,
+        camera_health_callback=health_observer,
+        display=False,
+    )
+
+    assert received_callback is health_observer

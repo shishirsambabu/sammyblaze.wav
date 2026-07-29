@@ -28,6 +28,7 @@ from handmusic.music.user_presets import (
     save_user_preset,
 )
 from handmusic.telemetry import PerformanceTelemetry, TelemetrySnapshot
+from handmusic.tracking.camera import CameraHealthSnapshot
 
 
 def list_midi_output_ports() -> list[str]:
@@ -148,8 +149,29 @@ else:
             if not self._camera_started:
                 self._camera_started = True
                 self.state_changed.emit("Running")
-            self.camera_health.emit("Camera: running")
+                self.camera_health.emit("Camera: running")
             self.frame_ready.emit(frame)
+
+        def _publish_camera_health(self, snapshot: CameraHealthSnapshot) -> None:
+            backend = f" via {snapshot.backend}" if snapshot.backend else ""
+            generation = (
+                f" (recovery {snapshot.generation})"
+                if snapshot.generation
+                else ""
+            )
+            if snapshot.state == "opening":
+                text = f"Camera {snapshot.camera_index}: opening..."
+            elif snapshot.state == "running":
+                text = f"Camera: running{backend}"
+            elif snapshot.state == "recovering":
+                text = f"Camera: recovering{generation}..."
+            elif snapshot.state == "recovered":
+                text = f"Camera: recovered{generation}{backend}"
+            elif snapshot.state == "failed":
+                text = snapshot.detail or "Camera recovery failed"
+            else:
+                text = f"Camera: {snapshot.state}"
+            self.camera_health.emit(text)
 
         def _publish_state(self, state: str) -> None:
             self.performance_state.emit(state)
@@ -323,6 +345,7 @@ else:
                     "state_callback": self._publish_state,
                     "expression_callback": self._publish_expression,
                     "transport_callback": self._publish_transport,
+                    "camera_health_callback": self._publish_camera_health,
                     "display": False,
                 }
                 try:
@@ -1314,9 +1337,23 @@ else:
             self.pedal_button.blockSignals(False)
 
         def _camera_health_changed(self, text: str) -> None:
-            active = "running" in text.lower() or "active" in text.lower()
-            self.camera_badge.setText("●  CAMERA  ON" if active else "●  CAMERA  IDLE")
-            color = COLORS.success if active else COLORS.text_secondary
+            lowered = text.lower()
+            if "recovering" in lowered:
+                label = "CAMERA RECOVERING"
+                color = COLORS.warning
+            elif "failed" in lowered or "error" in lowered:
+                label = "CAMERA ERROR"
+                color = COLORS.danger
+            elif any(
+                state in lowered
+                for state in ("running", "active", "recovered", "opening")
+            ):
+                label = "CAMERA ON"
+                color = COLORS.success
+            else:
+                label = "CAMERA IDLE"
+                color = COLORS.text_secondary
+            self.camera_badge.setText(label)
             self.camera_badge.setStyleSheet(
                 f"color: {color}; border: 1px solid {COLORS.panel_border}; "
                 "border-radius: 8px; padding: 10px 16px;"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from math import isfinite
 from sys import platform
 from threading import BoundedSemaphore, Event, Lock, Thread
@@ -10,12 +11,13 @@ from typing import Any
 from .latest_frame import FrameStreamClosed, LatestFrameQueue
 
 DEFAULT_OPEN_TIMEOUT_S = 4.5
-DEFAULT_RECOVERY_TIMEOUT_S = 3.0
+DEFAULT_RECOVERY_TIMEOUT_S = 12.0
 DEFAULT_RECOVERY_ATTEMPTS = 3
 DEFAULT_READ_FAILURE_RETRIES = 2
 _OPEN_POLL_INTERVAL_S = 0.02
 _FRAME_POLL_INTERVAL_S = 0.05
 _READ_RETRY_INTERVAL_S = 0.03
+_RECOVERY_DEVICE_SETTLE_INTERVAL_S = 0.20
 _RECOVERY_RETRY_INTERVAL_S = 0.05
 _MAX_OPEN_WORKERS = 3
 _OPEN_WORKER_SLOTS = BoundedSemaphore(_MAX_OPEN_WORKERS)
@@ -27,6 +29,17 @@ class CameraOpenCancelled(RuntimeError):
 
 class CameraRecoveryExhausted(RuntimeError):
     """Raised when a running camera cannot recover within its bounded budget."""
+
+
+@dataclass(frozen=True, slots=True)
+class CameraHealthSnapshot:
+    """Immutable camera lifecycle state safe to publish across UI threads."""
+
+    camera_index: int
+    state: str
+    generation: int
+    backend: str | None
+    detail: str | None = None
 
 
 class _OpenResult:
@@ -128,6 +141,7 @@ class CameraStream:
         recovery_timeout_s: float = DEFAULT_RECOVERY_TIMEOUT_S,
         recovery_attempts: int = DEFAULT_RECOVERY_ATTEMPTS,
         read_failure_retries: int = DEFAULT_READ_FAILURE_RETRIES,
+        health_callback: Callable[[CameraHealthSnapshot], None] | None = None,
     ) -> None:
         if not isfinite(open_timeout_s) or open_timeout_s <= 0:
             raise ValueError("open_timeout_s must be a positive finite number")
@@ -155,22 +169,32 @@ class CameraStream:
         self._recovery_timeout_s = recovery_timeout_s
         self._recovery_attempts = recovery_attempts
         self._read_failure_retries = read_failure_retries
+        self._health_callback = health_callback
         self._external_stop = stop_event
         self._closed = Event()
+        self._recovery_requested = Event()
         self._capture_lock = Lock()
         self._capture: Any | None = None
         self._state_lock = Lock()
         self._generation = 0
         self._terminal_error: CameraRecoveryExhausted | None = None
-        capture, first_frame, backend_name = self._open(
-            camera_index,
-            open_timeout_s,
-        )
+        self._last_health: tuple[str, int, str | None, str | None] | None = None
+        self.backend_name: str | None = None
+        self._publish_health("opening")
+        try:
+            capture, first_frame, backend_name = self._open(
+                camera_index,
+                open_timeout_s,
+            )
+        except Exception as exc:
+            self._publish_health("failed", f"{type(exc).__name__}: {exc}")
+            raise
         self._capture = capture
         self.backend_name = backend_name
         self._frames: LatestFrameQueue[tuple[Any, int]] = LatestFrameQueue()
         self._frames.put((first_frame, int(monotonic() * 1000)))
         self._thread = Thread(target=self._capture_loop, name="camera-capture", daemon=True)
+        self._publish_health("running")
         self._thread.start()
 
     def _stop_requested(self) -> bool:
@@ -194,6 +218,38 @@ class CameraStream:
     def worker_alive(self) -> bool:
         """Whether the single latest-frame producer is still running."""
         return self._thread.is_alive()
+
+    def request_recovery(self) -> None:
+        """Request one diagnostic close/reopen cycle on the producer thread."""
+        if not self._closed.is_set():
+            self._recovery_requested.set()
+
+    def _publish_health(self, state: str, detail: str | None = None) -> None:
+        callback = self._health_callback
+        if callback is None:
+            return
+        with self._state_lock:
+            snapshot = CameraHealthSnapshot(
+                camera_index=self._camera_index,
+                state=state,
+                generation=self._generation,
+                backend=self.backend_name,
+                detail=detail,
+            )
+            key = (
+                snapshot.state,
+                snapshot.generation,
+                snapshot.backend,
+                snapshot.detail,
+            )
+            if key == self._last_health:
+                return
+            self._last_health = key
+        try:
+            callback(snapshot)
+        except Exception:
+            # Observability must never stop camera capture or recovery.
+            pass
 
     def _wait_until_stopped(self, delay_s: float) -> bool:
         deadline = monotonic() + delay_s
@@ -231,12 +287,16 @@ class CameraStream:
             self.backend_name = backend_name
             with self._state_lock:
                 self._generation += 1
-            return True
+        self._publish_health("recovered")
+        return True
 
     def _open(
         self,
         camera_index: int,
         open_timeout_s: float,
+        *,
+        preferred_backend: str | None = None,
+        allow_fallbacks: bool = True,
     ) -> tuple[Any, Any, str]:
         cv2 = self._cv2
         candidates: list[tuple[str, int]] = []
@@ -248,6 +308,23 @@ class CameraStream:
                 )
             )
         candidates.append(("automatic", cv2.CAP_ANY))
+        if preferred_backend is not None:
+            preferred = [
+                candidate
+                for candidate in candidates
+                if candidate[0] == preferred_backend
+            ]
+            if preferred:
+                candidates = (
+                    preferred
+                    + [
+                        candidate
+                        for candidate in candidates
+                        if candidate[0] != preferred_backend
+                    ]
+                    if allow_fallbacks
+                    else preferred
+                )
         strategy_deadline = monotonic() + open_timeout_s
         failures: list[str] = []
         for index, (name, backend) in enumerate(candidates):
@@ -309,6 +386,7 @@ class CameraStream:
         raise RuntimeError(f"Could not read camera {camera_index} ({details})")
 
     def _recover_capture(self) -> bool:
+        self._publish_health("recovering")
         recovery_deadline = monotonic() + self._recovery_timeout_s
         failures: list[str] = []
         for attempt in range(self._recovery_attempts):
@@ -318,12 +396,22 @@ class CameraStream:
             if remaining <= 0:
                 failures.append("total recovery deadline expired")
                 break
+            if attempt == 0 and self._wait_until_stopped(
+                min(_RECOVERY_DEVICE_SETTLE_INTERVAL_S, remaining * 0.1)
+            ):
+                return False
+            remaining = recovery_deadline - monotonic()
+            if remaining <= 0:
+                failures.append("total recovery deadline expired during device settle")
+                break
             attempts_left = self._recovery_attempts - attempt
             attempt_timeout = min(self._open_timeout_s, remaining / attempts_left)
             try:
                 capture, first_frame, backend_name = self._open(
                     self._camera_index,
                     attempt_timeout,
+                    preferred_backend=self.backend_name,
+                    allow_fallbacks=attempt > 0,
                 )
             except CameraOpenCancelled:
                 return False
@@ -349,6 +437,7 @@ class CameraStream:
             )
             with self._state_lock:
                 self._terminal_error = error
+            self._publish_health("failed", str(error))
         return False
 
     def _capture_loop(self) -> None:
@@ -359,21 +448,25 @@ class CameraStream:
                 if capture is None:
                     break
 
+                forced_recovery = self._recovery_requested.is_set()
+                if forced_recovery:
+                    self._recovery_requested.clear()
                 ok = False
                 frame = None
-                for retry in range(self._read_failure_retries + 1):
-                    if self._stop_requested():
-                        break
-                    try:
-                        ok, frame = capture.read()
-                    except Exception:
-                        ok, frame = False, None
-                    if ok and frame is not None:
-                        break
-                    if retry < self._read_failure_retries and self._wait_until_stopped(
-                        _READ_RETRY_INTERVAL_S
-                    ):
-                        break
+                if not forced_recovery:
+                    for retry in range(self._read_failure_retries + 1):
+                        if self._stop_requested():
+                            break
+                        try:
+                            ok, frame = capture.read()
+                        except Exception:
+                            ok, frame = False, None
+                        if ok and frame is not None:
+                            break
+                        if retry < self._read_failure_retries and self._wait_until_stopped(
+                            _READ_RETRY_INTERVAL_S
+                        ):
+                            break
 
                 if self._stop_requested():
                     break
@@ -403,9 +496,12 @@ class CameraStream:
 
     def close(self) -> None:
         self._closed.set()
+        self._recovery_requested.set()
         self._frames.close()
         _release_capture(self._take_capture())
         self._thread.join(timeout=1.0)
+        if self.terminal_error is None:
+            self._publish_health("stopped")
 
 
 def frames(
@@ -416,6 +512,7 @@ def frames(
     recovery_timeout_s: float = DEFAULT_RECOVERY_TIMEOUT_S,
     recovery_attempts: int = DEFAULT_RECOVERY_ATTEMPTS,
     read_failure_retries: int = DEFAULT_READ_FAILURE_RETRIES,
+    health_callback: Callable[[CameraHealthSnapshot], None] | None = None,
 ) -> Iterator[tuple[Any, int]]:
     """Yield the newest available frame; OpenCV remains an optional dependency."""
     stream = CameraStream(
@@ -425,6 +522,7 @@ def frames(
         recovery_timeout_s=recovery_timeout_s,
         recovery_attempts=recovery_attempts,
         read_failure_retries=read_failure_retries,
+        health_callback=health_callback,
     )
     try:
         yield from stream

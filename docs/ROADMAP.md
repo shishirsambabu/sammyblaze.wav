@@ -95,6 +95,12 @@ headless packaged hardware-smoke path, and an absolute release-footprint gate. I
 v1 compatibility: Phase 9.2 audio-core DLLs still load, while newer cores expose requested and
 effective unison quality.
 
+Phase 9.4 is in progress. It adds actual SoundDevice callback timing/xrun evidence, repeated
+real-camera diagnostic close/reopen soaks, performer-visible camera recovery lifecycle state,
+and an evidence-based DAW host acceptance matrix. The development-machine audit found no FL
+Studio installation, so FL-specific scan, playback, automation, state recall, and multi-instance
+claims remain blocked until the host is installed.
+
 Remaining Phase 9 work: prove actual SoundDevice callback/xrun performance in long hardware
 soaks, physically test camera disconnect/reconnect exhaustion, sign Windows binaries, and complete
 repeated clean-machine hardware and FL Studio compatibility tests.

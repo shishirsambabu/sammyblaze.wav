@@ -84,3 +84,13 @@ and performs a bounded number of reopen attempts inside one recovery deadline. C
 is serialized and released exactly once across stop, close, cancellation, and late-worker races.
 When recovery is exhausted, the frame iterator raises a terminal recovery error so the desktop
 cannot remain indefinitely in a false running state.
+
+## ADR-014: release claims require typed evidence from the real boundary
+
+Unit tests, diagnostic fault injection, native microbenchmarks, Steinberg validation, physical
+hardware, and DAW-host acceptance answer different questions and are not interchangeable.
+Reliability tools therefore emit typed machine-readable reports that identify the concrete
+device, binary, limits, and test method. A forced camera close/reopen proves the recovery path but
+not USB unplug behavior; a Steinberg pass proves VST3 contract compliance but not FL Studio
+discovery or project recall. Missing hardware or host software leaves that gate explicitly
+blocked instead of being converted into a pass.
