@@ -118,7 +118,7 @@ void GestureBridgeReceiver::receiveLoop (std::stop_token stopToken)
         if (std::memcmp (packet.data (), "SBW1", 4) != 0 || packet[4] != 1)
             continue;
         if (packet[5] < static_cast<std::uint8_t> (BridgeMessageType::noteOn) ||
-            packet[5] > static_cast<std::uint8_t> (BridgeMessageType::programChange))
+            packet[5] > static_cast<std::uint8_t> (BridgeMessageType::soundParameter))
             continue;
         if (packet[6] > 127 || packet[7] > 127 || packet[8] > 127)
             continue;

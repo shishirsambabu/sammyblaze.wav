@@ -66,6 +66,7 @@ private:
     void handleEvents (IEventList* input, IEventList* output);
     void updateParameters (IParameterChanges* changes);
     void applyPreset (std::uint8_t program);
+    void applySoundParameter (std::uint8_t parameter, std::uint8_t value);
     void noteOn (int16 pitch, float velocity);
     void noteOff (int16 pitch);
     void beginRelease (Voice& voice);

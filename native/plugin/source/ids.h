@@ -14,6 +14,22 @@ enum ParameterIds : Steinberg::Vst::ParamID
     kDelayMixId = 105,
     kChorusMixId = 106,
     kSoundProgramId = 107,
+    kWaveformAId = 108,
+    kWaveformBId = 109,
+    kWaveformMixId = 110,
+    kAttackId = 111,
+    kDecayId = 112,
+    kSustainId = 113,
+    kReleaseId = 114,
+    kFilterTypeId = 115,
+    kFilterCutoffId = 116,
+    kFilterResonanceId = 117,
+    kFilterEnvelopeId = 118,
+    kDetuneId = 119,
+    kUnisonId = 120,
+    kPatchVibratoRateId = 121,
+    kPatchVibratoDepthId = 122,
+    kDelayTimeId = 123,
 };
 
 static DECLARE_UID (

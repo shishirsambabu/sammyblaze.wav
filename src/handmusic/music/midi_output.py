@@ -4,6 +4,8 @@ import socket
 import struct
 from dataclasses import dataclass, field
 
+from handmusic.music.presets import Preset
+
 PLUGIN_BRIDGE_HOST = "127.0.0.1"
 PLUGIN_BRIDGE_PORT = 18736
 _BRIDGE_PACKET = struct.Struct("<4sBBBBBBI")
@@ -14,6 +16,7 @@ _NOTE_OFF = 2
 _CONTROL_CHANGE = 3
 _PANIC = 4
 _PROGRAM_CHANGE = 5
+_SOUND_PARAMETER = 6
 
 
 def bridge_packet(
@@ -59,6 +62,16 @@ class MemoryMidiOutput:
     def program_change(self, program: int) -> None:
         self.messages.append(("program", program, None))
 
+    def apply_sound_patch(
+        self,
+        preset: Preset,
+        *,
+        master_gain: float = 0.75,
+        brightness: float = 0.5,
+    ) -> None:
+        program = int(preset.program_id)
+        self.messages.append(("patch", program, None))
+
 
 class MidoOutput:
     """Optional real MIDI adapter. Importing this module does not require Mido."""
@@ -93,6 +106,23 @@ class MidoOutput:
         midi_program = get_preset(program).midi_program
         self._port.send(self._mido.Message("program_change", program=midi_program))
 
+    def apply_sound_patch(
+        self,
+        preset: Preset,
+        *,
+        master_gain: float = 0.75,
+        brightness: float = 0.5,
+    ) -> None:
+        compatible_controls = (
+            (7, master_gain),
+            (74, brightness),
+            (91, float(preset.reverb_mix)),
+            (93, float(preset.chorus_mix)),
+            (94, float(preset.delay_mix)),
+        )
+        for control, value in compatible_controls:
+            self.control_change(control, round(max(0.0, min(1.0, value)) * 127.0))
+
     def close(self) -> None:
         self._port.close()
 
@@ -123,6 +153,24 @@ class PluginBridgeOutput:
 
     def program_change(self, program: int) -> None:
         self._send(_PROGRAM_CHANGE, program, 0)
+
+    def apply_sound_patch(
+        self,
+        preset: Preset,
+        *,
+        master_gain: float = 0.75,
+        brightness: float = 0.5,
+    ) -> None:
+        from handmusic.music.sound_parameters import patch_messages
+
+        if not isinstance(preset, Preset):
+            raise TypeError("preset must be a Preset")
+        for parameter, value in patch_messages(
+            preset,
+            master_gain=master_gain,
+            brightness=brightness,
+        ):
+            self._send(_SOUND_PARAMETER, int(parameter), value)
 
     def close(self) -> None:
         if self._closed:

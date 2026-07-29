@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from handmusic.music.presets import Preset
+
 
 class FluidSynthOutput:
     """Optional SoundFont adapter; it shares the NoteSink contract with MIDI."""
@@ -39,6 +41,23 @@ class FluidSynthOutput:
         from handmusic.music.presets import get_preset
 
         self._synth.program_change(0, get_preset(program).midi_program)
+
+    def apply_sound_patch(
+        self,
+        preset: Preset,
+        *,
+        master_gain: float = 0.75,
+        brightness: float = 0.5,
+    ) -> None:
+        compatible_controls = (
+            (7, master_gain),
+            (74, brightness),
+            (91, float(preset.reverb_mix)),
+            (93, float(preset.chorus_mix)),
+            (94, float(preset.delay_mix)),
+        )
+        for control, value in compatible_controls:
+            self.control_change(control, round(max(0.0, min(1.0, value)) * 127.0))
 
     def close(self) -> None:
         if not self._closed:

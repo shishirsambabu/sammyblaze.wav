@@ -32,3 +32,9 @@ def test_bridge_packet_supports_sound_program_changes() -> None:
     packet = bridge_packet(5, 111, sequence=9)
 
     assert struct.unpack("<4sBBBBBBI", packet)[1:] == (1, 5, 0, 111, 0, 0, 9)
+
+
+def test_bridge_packet_supports_live_sound_parameter_changes() -> None:
+    packet = bridge_packet(6, 18, 92, sequence=10)
+
+    assert struct.unpack("<4sBBBBBBI", packet)[1:] == (1, 6, 0, 18, 92, 0, 10)

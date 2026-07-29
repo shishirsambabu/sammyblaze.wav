@@ -108,11 +108,33 @@ class SynthEngine:
             self.panic()
 
     def program_change(self, program: int) -> None:
-        self.preset = get_preset(program)
-        self.reverb_mix = self.preset.reverb_mix
-        self.delay_mix = self.preset.delay_mix
-        self.chorus_mix = self.preset.chorus_mix
+        self.apply_sound_patch(get_preset(program))
         self.panic()
+
+    def apply_sound_patch(
+        self,
+        preset: Preset,
+        *,
+        master_gain: float | None = None,
+        brightness: float | None = None,
+    ) -> None:
+        """Apply a full Moog-style patch without interrupting active voices."""
+
+        preset.validate()
+        if master_gain is not None and not 0.0 <= master_gain <= 1.0:
+            raise ValueError("master_gain must be between 0 and 1")
+        if brightness is not None and not 0.0 <= brightness <= 1.0:
+            raise ValueError("brightness must be between 0 and 1")
+        self.preset = preset
+        for voice in self.voices:
+            voice.preset = preset
+        self.reverb_mix = preset.reverb_mix
+        self.delay_mix = preset.delay_mix
+        self.chorus_mix = preset.chorus_mix
+        if master_gain is not None:
+            self.master_gain = master_gain
+        if brightness is not None:
+            self.brightness = brightness
 
     def panic(self) -> None:
         self.voices.clear()
@@ -152,18 +174,11 @@ class SynthEngine:
         preset = voice.preset
         samples = np.arange(frame_count, dtype=np.float64)
         vibrato_rate = max(0.01, preset.vibrato_rate_hz)
-        lfo = np.sin(
-            2.0
-            * pi
-            * (self._lfo_phase + samples * vibrato_rate / self.sample_rate)
-        )
+        lfo = np.sin(2.0 * pi * (self._lfo_phase + samples * vibrato_rate / self.sample_rate))
         vibrato_depth = preset.vibrato_depth_semitones + self.gesture_vibrato * 0.5
-        frequency = (
-            440.0
-            * np.power(
-                2.0,
-                ((voice.note - 69.0) + lfo * vibrato_depth) / 12.0,
-            )
+        frequency = 440.0 * np.power(
+            2.0,
+            ((voice.note - 69.0) + lfo * vibrato_depth) / 12.0,
         )
         unison = min(_MAX_UNISON, max(1, preset.unison_voices))
         oscillators = np.zeros(frame_count, dtype=np.float64)
@@ -181,10 +196,7 @@ class SynthEngine:
             voice.phase_b[index] = phase_b[-1]
             wave_a = self._wave(preset.waveform_a, phase_a)
             wave_b = self._wave(preset.waveform_b, phase_b)
-            oscillators += (
-                wave_a * (1.0 - preset.waveform_mix)
-                + wave_b * preset.waveform_mix
-            )
+            oscillators += wave_a * (1.0 - preset.waveform_mix) + wave_b * preset.waveform_mix
         oscillators /= np.sqrt(float(unison))
         oscillators *= envelope * voice.velocity
         return self._filter(voice, oscillators, envelope)
@@ -194,15 +206,15 @@ class SynthEngine:
         preset = voice.preset
         for index in range(frame_count):
             if voice.stage == "attack":
-                voice.envelope += 1000.0 / (
-                    max(preset.attack_ms, _MIN_TIME_MS) * self.sample_rate
-                )
+                voice.envelope += 1000.0 / (max(preset.attack_ms, _MIN_TIME_MS) * self.sample_rate)
                 if voice.envelope >= 1.0:
                     voice.envelope = 1.0
                     voice.stage = "decay"
             elif voice.stage == "decay":
-                voice.envelope -= (1.0 - preset.sustain) * 1000.0 / (
-                    max(preset.decay_ms, _MIN_TIME_MS) * self.sample_rate
+                voice.envelope -= (
+                    (1.0 - preset.sustain)
+                    * 1000.0
+                    / (max(preset.decay_ms, _MIN_TIME_MS) * self.sample_rate)
                 )
                 if voice.envelope <= preset.sustain:
                     voice.envelope = preset.sustain
@@ -235,10 +247,7 @@ class SynthEngine:
                 min(
                     preset.filter_cutoff_hz
                     * 2.0
-                    ** (
-                        preset.filter_envelope * float(envelope[index]) * 4.0
-                        + brightness_octaves
-                    ),
+                    ** (preset.filter_envelope * float(envelope[index]) * 4.0 + brightness_octaves),
                     self.sample_rate * 0.42,
                 ),
             )
@@ -277,10 +286,7 @@ class SynthEngine:
             phase = (self._lfo_phase + index * 0.73 / self.sample_rate) % 1.0
             chorus_samples = max(
                 1,
-                int(
-                    self.sample_rate
-                    * (0.018 + 0.005 * (0.5 + 0.5 * sin(2 * pi * phase)))
-                ),
+                int(self.sample_rate * (0.018 + 0.005 * (0.5 + 0.5 * sin(2 * pi * phase)))),
             )
             delay = self._tap(delay_samples)
             room_a = self._tap(reverb_a)
@@ -331,30 +337,14 @@ class SynthEngine:
         if waveform == "pulse":
             return np.where(phase < 0.28, 1.0, -1.0)
         if waveform == "organ":
-            return (
-                np.sin(angle) * 0.68
-                + np.sin(angle * 2.0) * 0.22
-                + np.sin(angle * 3.0) * 0.10
-            )
+            return np.sin(angle) * 0.68 + np.sin(angle * 2.0) * 0.22 + np.sin(angle * 3.0) * 0.10
         if waveform == "metal":
-            return (
-                np.sin(angle) * 0.52
-                + np.sin(angle * 2.41) * 0.30
-                + np.sin(angle * 5.31) * 0.18
-            )
+            return np.sin(angle) * 0.52 + np.sin(angle * 2.41) * 0.30 + np.sin(angle * 5.31) * 0.18
         if waveform == "noise":
             return self._rng.uniform(-1.0, 1.0, len(phase))
         if waveform == "vocal":
-            return (
-                np.sin(angle) * 0.58
-                + np.sin(angle * 2.0) * 0.27
-                + np.sin(angle * 4.0) * 0.15
-            )
-        return (
-            np.sin(angle) * 0.62
-            + np.sin(angle * 3.0) * 0.23
-            + (phase * 2.0 - 1.0) * 0.15
-        )
+            return np.sin(angle) * 0.58 + np.sin(angle * 2.0) * 0.27 + np.sin(angle * 4.0) * 0.15
+        return np.sin(angle) * 0.62 + np.sin(angle * 3.0) * 0.23 + (phase * 2.0 - 1.0) * 0.15
 
     def _begin_release(self, voice: _Voice) -> None:
         if voice.stage in ("off", "release"):
@@ -395,7 +385,7 @@ class BuiltinSynthOutput:
             device = sounddevice.query_devices(kind="output")
             sample_rate = float(device["default_samplerate"])
             self._engine = SynthEngine(sample_rate, program)
-            self._events: SimpleQueue[tuple[str, int, int | None]] = SimpleQueue()
+            self._events: SimpleQueue[tuple[str, object, object | None]] = SimpleQueue()
             self._stream: Any = sounddevice.OutputStream(
                 samplerate=sample_rate,
                 blocksize=block_size,
@@ -422,6 +412,16 @@ class BuiltinSynthOutput:
         get_preset(program)
         self._events.put(("program", program, None))
 
+    def apply_sound_patch(
+        self,
+        preset: Preset,
+        *,
+        master_gain: float = 0.75,
+        brightness: float = 0.5,
+    ) -> None:
+        preset.validate()
+        self._events.put(("patch", preset, (master_gain, brightness)))
+
     def close(self) -> None:
         if self._closed:
             return
@@ -441,13 +441,22 @@ class BuiltinSynthOutput:
             while not self._events.empty():
                 kind, data1, data2 = self._events.get_nowait()
                 if kind == "note_on":
-                    self._engine.note_on(data1, int(data2 or 0))
+                    self._engine.note_on(int(data1), int(data2 or 0))
                 elif kind == "note_off":
-                    self._engine.note_off(data1)
+                    self._engine.note_off(int(data1))
                 elif kind == "cc":
-                    self._engine.control_change(data1, int(data2 or 0))
+                    self._engine.control_change(int(data1), int(data2 or 0))
+                elif kind == "patch":
+                    if not isinstance(data1, Preset) or not isinstance(data2, tuple):
+                        continue
+                    master_gain, brightness = data2
+                    self._engine.apply_sound_patch(
+                        data1,
+                        master_gain=float(master_gain),
+                        brightness=float(brightness),
+                    )
                 else:
-                    self._engine.program_change(data1)
+                    self._engine.program_change(int(data1))
             output[:] = self._engine.render(frame_count)
         except Exception:
             output.fill(0.0)

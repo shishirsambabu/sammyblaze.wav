@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 import numpy as np
 
 from handmusic.music.builtin_synth import SynthEngine
+from handmusic.music.presets import get_preset
 
 
 def test_builtin_synth_renders_finite_stereo_audio() -> None:
@@ -53,3 +56,23 @@ def test_program_change_loads_factory_effect_settings_and_panics() -> None:
     assert synth.reverb_mix == synth.preset.reverb_mix
     assert synth.delay_mix == synth.preset.delay_mix
     assert not synth.voices
+
+
+def test_live_patch_edit_updates_active_voices_without_cutting_them() -> None:
+    synth = SynthEngine(program=0)
+    synth.note_on(60, 100)
+    synth.render(256)
+    edited = replace(
+        get_preset(0),
+        waveform_a="saw",
+        filter_cutoff_hz=4200.0,
+        reverb_mix=0.7,
+    )
+
+    synth.apply_sound_patch(edited, master_gain=0.6, brightness=0.8)
+
+    assert synth.voices
+    assert synth.voices[0].preset is edited
+    assert synth.master_gain == 0.6
+    assert synth.brightness == 0.8
+    assert synth.reverb_mix == 0.7

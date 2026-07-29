@@ -15,6 +15,16 @@ namespace {
 constexpr double twoPi = 6.28318530717958647692;
 constexpr float minimumEnvelopeTimeMs = 0.5f;
 
+float linearValue (float normalized, float minimum, float maximum) noexcept
+{
+    return minimum + (maximum - minimum) * normalized;
+}
+
+float logarithmicValue (float normalized, float minimum, float maximum) noexcept
+{
+    return minimum * std::pow (maximum / minimum, normalized);
+}
+
 double wrapPhase (double phase) noexcept
 {
     phase -= std::floor (phase);
@@ -382,6 +392,9 @@ void Processor::handleBridge ()
             }
             case BridgeMessageType::panic: resetVoices (); break;
             case BridgeMessageType::programChange: applyPreset (message.data1); break;
+            case BridgeMessageType::soundParameter:
+                applySoundParameter (message.data1, message.data2);
+                break;
         }
     }
 }
@@ -419,16 +432,74 @@ void Processor::updateParameters (IParameterChanges* changes)
             continue;
         switch (queue->getParameterId ())
         {
-            case kMasterGainId: masterGain = value; break;
+            case kMasterGainId:
+                applySoundParameter (0, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
             case kVibratoDepthId: vibratoDepth = value; break;
             case kExpressionId: expression = value; break;
-            case kBrightnessId: brightness = value; break;
-            case kReverbMixId: reverbMix = value; break;
-            case kDelayMixId: delayMix = value; break;
-            case kChorusMixId: chorusMix = value; break;
+            case kBrightnessId:
+                applySoundParameter (20, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kReverbMixId:
+                applySoundParameter (16, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kDelayMixId:
+                applySoundParameter (17, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kChorusMixId:
+                applySoundParameter (19, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
             case kSoundProgramId:
                 applyPreset (static_cast<std::uint8_t> (
                     std::round (value * static_cast<ParamValue> (kPresetCount - 1))));
+                break;
+            case kWaveformAId:
+                applySoundParameter (1, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kWaveformBId:
+                applySoundParameter (2, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kWaveformMixId:
+                applySoundParameter (3, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kAttackId:
+                applySoundParameter (4, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kDecayId:
+                applySoundParameter (5, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kSustainId:
+                applySoundParameter (6, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kReleaseId:
+                applySoundParameter (7, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kFilterTypeId:
+                applySoundParameter (8, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kFilterCutoffId:
+                applySoundParameter (9, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kFilterResonanceId:
+                applySoundParameter (10, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kFilterEnvelopeId:
+                applySoundParameter (11, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kDetuneId:
+                applySoundParameter (12, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kUnisonId:
+                applySoundParameter (13, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kPatchVibratoRateId:
+                applySoundParameter (14, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kPatchVibratoDepthId:
+                applySoundParameter (15, static_cast<std::uint8_t> (std::round (value * 127.0)));
+                break;
+            case kDelayTimeId:
+                applySoundParameter (18, static_cast<std::uint8_t> (std::round (value * 127.0)));
                 break;
             default: break;
         }
@@ -445,6 +516,77 @@ void Processor::applyPreset (std::uint8_t program)
     reverbMix = currentPreset.reverbMix;
     delayMix = currentPreset.delayMix;
     chorusMix = currentPreset.chorusMix;
+}
+
+void Processor::applySoundParameter (std::uint8_t parameter, std::uint8_t value)
+{
+    const auto normalized = static_cast<float> (value) / 127.0f;
+    switch (parameter)
+    {
+        case 0: masterGain = normalized; break;
+        case 1:
+            currentPreset.waveformA =
+                static_cast<Waveform> (std::clamp (std::lround (normalized * 9.0f), 0L, 9L));
+            break;
+        case 2:
+            currentPreset.waveformB =
+                static_cast<Waveform> (std::clamp (std::lround (normalized * 9.0f), 0L, 9L));
+            break;
+        case 3: currentPreset.waveformMix = normalized; break;
+        case 4:
+            currentPreset.attackMs =
+                value == 0 ? 0.0f : logarithmicValue (normalized, 0.5f, 20000.0f);
+            break;
+        case 5:
+            currentPreset.decayMs = logarithmicValue (normalized, 0.5f, 20000.0f);
+            break;
+        case 6: currentPreset.sustain = normalized; break;
+        case 7:
+            currentPreset.releaseMs =
+                value == 0 ? 0.0f : logarithmicValue (normalized, 0.5f, 30000.0f);
+            break;
+        case 8:
+            currentPreset.filterType =
+                static_cast<FilterType> (
+                    std::clamp (std::lround (normalized * 3.0f), 0L, 3L));
+            break;
+        case 9:
+            currentPreset.filterCutoffHz =
+                logarithmicValue (normalized, 20.0f, 20000.0f);
+            break;
+        case 10: currentPreset.filterResonance = normalized; break;
+        case 11: currentPreset.filterEnvelope = linearValue (normalized, -1.0f, 1.0f); break;
+        case 12: currentPreset.detuneCents = normalized * 100.0f; break;
+        case 13:
+            currentPreset.unisonVoices = static_cast<std::uint8_t> (
+                std::clamp (std::lround (linearValue (normalized, 1.0f, 16.0f)), 1L, 16L));
+            break;
+        case 14: currentPreset.vibratoRateHz = normalized * 15.0f; break;
+        case 15: currentPreset.vibratoDepthSemitones = normalized * 2.0f; break;
+        case 16:
+            currentPreset.reverbMix = normalized;
+            reverbMix = normalized;
+            break;
+        case 17:
+            currentPreset.delayMix = normalized;
+            delayMix = normalized;
+            break;
+        case 18:
+            currentPreset.delayTimeMs =
+                logarithmicValue (normalized, 1.0f, 2500.0f);
+            break;
+        case 19:
+            currentPreset.chorusMix = normalized;
+            chorusMix = normalized;
+            break;
+        case 20: brightness = normalized; break;
+        default: return;
+    }
+    for (auto& voice : voices)
+    {
+        if (voice.active)
+            voice.preset = currentPreset;
+    }
 }
 
 void Processor::noteOn (int16 pitch, float velocity)
@@ -556,7 +698,62 @@ tresult PLUGIN_API Processor::setState (IBStream* state)
         reverbMix = savedReverbMix;
         delayMix = savedDelayMix;
         chorusMix = savedChorusMix;
+        currentPreset.reverbMix = static_cast<float> (savedReverbMix);
+        currentPreset.delayMix = static_cast<float> (savedDelayMix);
+        currentPreset.chorusMix = static_cast<float> (savedChorusMix);
     }
+    uint32 discrete = 0;
+    double patchValue = 0.0;
+    if (!streamer.readInt32u (discrete))
+        return kResultOk;
+    currentPreset.waveformA = static_cast<Waveform> (std::min<uint32> (discrete, 9));
+    if (!streamer.readInt32u (discrete))
+        return kResultFalse;
+    currentPreset.waveformB = static_cast<Waveform> (std::min<uint32> (discrete, 9));
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.waveformMix = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.attackMs = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.decayMs = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.sustain = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.releaseMs = static_cast<float> (patchValue);
+    if (!streamer.readInt32u (discrete))
+        return kResultFalse;
+    currentPreset.filterType =
+        static_cast<FilterType> (std::min<uint32> (discrete, 3));
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.filterCutoffHz = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.filterResonance = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.filterEnvelope = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.detuneCents = static_cast<float> (patchValue);
+    if (!streamer.readInt32u (discrete))
+        return kResultFalse;
+    currentPreset.unisonVoices =
+        static_cast<std::uint8_t> (std::clamp<uint32> (discrete, 1, 16));
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.vibratoRateHz = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.vibratoDepthSemitones = static_cast<float> (patchValue);
+    if (!streamer.readDouble (patchValue))
+        return kResultFalse;
+    currentPreset.delayTimeMs = static_cast<float> (patchValue);
     return kResultOk;
 }
 
@@ -572,7 +769,26 @@ tresult PLUGIN_API Processor::getState (IBStream* state)
                    streamer.writeDouble (reverbMix) &&
                    streamer.writeDouble (delayMix) &&
                    streamer.writeDouble (chorusMix) &&
-                   streamer.writeInt32u (currentPreset.program)
+                   streamer.writeInt32u (currentPreset.program) &&
+                   streamer.writeInt32u (
+                       static_cast<uint32> (currentPreset.waveformA)) &&
+                   streamer.writeInt32u (
+                       static_cast<uint32> (currentPreset.waveformB)) &&
+                   streamer.writeDouble (currentPreset.waveformMix) &&
+                   streamer.writeDouble (currentPreset.attackMs) &&
+                   streamer.writeDouble (currentPreset.decayMs) &&
+                   streamer.writeDouble (currentPreset.sustain) &&
+                   streamer.writeDouble (currentPreset.releaseMs) &&
+                   streamer.writeInt32u (
+                       static_cast<uint32> (currentPreset.filterType)) &&
+                   streamer.writeDouble (currentPreset.filterCutoffHz) &&
+                   streamer.writeDouble (currentPreset.filterResonance) &&
+                   streamer.writeDouble (currentPreset.filterEnvelope) &&
+                   streamer.writeDouble (currentPreset.detuneCents) &&
+                   streamer.writeInt32u (currentPreset.unisonVoices) &&
+                   streamer.writeDouble (currentPreset.vibratoRateHz) &&
+                   streamer.writeDouble (currentPreset.vibratoDepthSemitones) &&
+                   streamer.writeDouble (currentPreset.delayTimeMs)
                ? kResultOk
                : kResultFalse;
 }

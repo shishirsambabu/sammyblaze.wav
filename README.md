@@ -96,10 +96,14 @@ When reporting a machine-specific issue, run `python -m handmusic --diagnostics`
 
 Camera sessions print frame age, dropped-frame, and gesture-latency telemetry on exit. Add `--telemetry-json path/to/session-telemetry.json` to save the bounded report for later review.
 
-The optional `--ui` command opens the desktop performer control surface. It provides camera,
-built-in/MIDI/VST3 routing, a live 120-sound browser, chord-bank and starting lead-mode
+The optional `--ui` command opens the dark-cyan performance cockpit. Its **Perform** page
+provides camera, built-in/MIDI/VST3 routing, a live 120-sound browser, chord-bank and lead-mode
 selection, camera and 3D expression canvases, record/play/clear loop controls, sustain, panic,
-live voicing state, and telemetry.
+live voicing state, and telemetry. Its **Sound Lab** page provides Moog-style dual-oscillator,
+ADSR, multimode filter, unison, vibrato, volume, brightness, reverb, delay/time, and chorus
+controls. Edits reach the running standalone synth and VST3 bridge without cutting active
+notes. **Save As** stores a complete versioned user preset in the local SammyBlaze preset
+library; saved sounds can be loaded or deleted on later launches.
 Install the UI extra first with `python -m pip install -e ".[ui]"`.
 
 For a specific playable setup:
@@ -136,7 +140,9 @@ The repository includes a native C++20 VST3 instrument built directly against St
 MIT-licensed VST3 SDK. It accepts ordinary host MIDI and the direct SammyBlaze localhost bridge,
 then synthesizes stereo audio with 24-voice polyphony, dual oscillators, ADSR envelopes,
 multimode filters, unison, a 120-sound DAW parameter, and automatable gain, vibrato, expression,
-brightness, reverb, delay, and chorus.
+brightness, reverb, delay, chorus, dual oscillators, ADSR, filter, detune, unison, patch
+vibrato, and delay-time controls. Companion Sound Lab edits are sent as complete patch
+snapshots and DAW state restores every editable synthesis parameter.
 
 Build and run Steinberg's validator:
 

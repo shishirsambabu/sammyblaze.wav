@@ -52,8 +52,9 @@ automatable state, and passes Steinberg validation.
 
 The current slice delivers a validated C++20 VST3, localhost gesture bridge, 24-voice dual-
 oscillator synth, ADSR, multimode filters, unison, sustain, parameter smoothing,
-reverb/delay/chorus, a shared 120-sound library, live bridge program changes, and a D:-based
-build. Physical FL Studio discovery is the remaining workstation smoke test. Host-synchronized
+reverb/delay/chorus, a shared 120-sound library, live bridge program and full patch changes,
+24 automatable DAW parameters, complete patch state restoration, and a D:-based build. Physical
+FL Studio discovery is the remaining workstation smoke test. Host-synchronized
 PPQ looping, multi-instance routing, MPE/note expression, signing, and installer integration are
 next.
 
@@ -62,3 +63,8 @@ next.
 Exit criteria: tempo/PPQ-aware loop scenes, quantize and swing, overdub/undo, count-in,
 metronome, clip export, scene automation, mapping learn, multi-instance routing, MPE/MIDI 2.0,
 and release-grade signing are verified across supported DAWs.
+
+The first Phase 8 slice is delivered: a scalable dark-cyan cockpit, dedicated Sound Lab,
+18 hardware-style sound controls, live standalone/VST3 patch editing, and versioned local user
+preset save/load/delete. Tempo/PPQ-aware looping and the remaining workstation functions are
+the next slices.

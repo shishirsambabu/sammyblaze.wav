@@ -8,12 +8,13 @@
   up to three rendered unison voices, multimode filtering, smoothed gain/expression/timbre,
   motion-driven vibrato, stereo reverb, variable delay, chorus, and output limiting.
 - A shared 120-sound factory library covering keys through cinematic atmospheres.
-- Eight automatable parameters, including the 120-choice Factory Sound list, with DAW state
-  persistence.
+- Twenty-four automatable parameters, including the 120-choice Factory Sound list and complete
+  oscillator, envelope, filter, unison, vibrato and effects controls, with DAW state persistence.
 - Local-only direct gesture bridge; no virtual MIDI driver and no Python inside the plug-in.
 - Build and explicit Steinberg validator gate on D:.
 - Companion loop record/play/clear controls shared by MIDI, standalone, and VST bridge outputs.
-- Bridge program-change messages switch the native factory sound without restarting a session.
+- Bridge program-change and live Sound Lab parameter snapshots switch or edit the native sound
+  without restarting a session or cutting active notes.
 
 ## Build and validate
 
