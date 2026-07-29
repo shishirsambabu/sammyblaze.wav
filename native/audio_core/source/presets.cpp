@@ -1,9 +1,9 @@
-#include "presets.h"
+#include "sammyblaze/audio_core/presets.h"
 
 #include <array>
 #include <utility>
 
-namespace Steinberg::Vst::SammyBlaze {
+namespace SammyBlaze::AudioCore {
 namespace {
 
 using Bounds = std::pair<float, float>;
@@ -247,4 +247,4 @@ SynthPreset presetForProgram (std::uint8_t requestedProgram) noexcept
     };
 }
 
-} // namespace Steinberg::Vst::SammyBlaze
+} // namespace SammyBlaze::AudioCore

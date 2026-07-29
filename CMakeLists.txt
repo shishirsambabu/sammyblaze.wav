@@ -27,4 +27,5 @@ set(SMTG_CREATE_MODULE_INFO OFF CACHE BOOL "" FORCE)
 set(SMTG_RUN_VST_VALIDATOR OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${VST3_SDK_ROOT}" "${CMAKE_BINARY_DIR}/vst3sdk")
+add_subdirectory(native/audio_core)
 add_subdirectory(native/plugin)

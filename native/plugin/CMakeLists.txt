@@ -7,8 +7,6 @@ set(sammyblaze_plugin_sources
     source/ids.h
     source/processor.cpp
     source/processor.h
-    source/presets.cpp
-    source/presets.h
     source/version.h
 )
 
@@ -17,7 +15,12 @@ smtg_add_vst3plugin(SammyBlazeVST3
     SOURCES_LIST ${sammyblaze_plugin_sources}
 )
 
-target_link_libraries(SammyBlazeVST3 PRIVATE sdk)
+target_link_libraries(
+    SammyBlazeVST3
+    PRIVATE
+        sdk
+        SammyBlazeAudioCoreEngine
+)
 if(WIN32)
     target_link_libraries(SammyBlazeVST3 PRIVATE ws2_32)
 endif()
@@ -32,11 +35,12 @@ endif()
 if(BUILD_TESTING)
     add_executable(SammyBlazeDspValidation
         tests/dsp_validation.cpp
-        source/dsp.h
-        source/presets.cpp
-        source/presets.h
     )
-    target_include_directories(SammyBlazeDspValidation PRIVATE source)
+    target_link_libraries(
+        SammyBlazeDspValidation
+        PRIVATE
+            SammyBlazeAudioCoreEngine
+    )
     target_compile_features(SammyBlazeDspValidation PRIVATE cxx_std_20)
     if(MSVC)
         target_compile_options(SammyBlazeDspValidation PRIVATE /W4 /permissive-)

@@ -1,11 +1,11 @@
 #pragma once
 
-#include "presets.h"
+#include "sammyblaze/audio_core/presets.h"
 
 #include <algorithm>
 #include <cmath>
 
-namespace Steinberg::Vst::SammyBlaze {
+namespace SammyBlaze::AudioCore {
 
 inline constexpr float kMinimumFilterCutoffHz = 25.0f;
 inline constexpr float kMaximumFilterNyquistRatio = 0.42f;
@@ -101,15 +101,19 @@ inline StateVariableFilterFrame processStateVariableFilter (
     float resonance,
     double sampleRate,
     float& lowState,
-    float& bandState) noexcept
+    float& bandState,
+    bool* recovered = nullptr) noexcept
 {
+    bool didRecover = false;
     if (!std::isfinite (lowState) || !std::isfinite (bandState))
     {
         lowState = 0.0f;
         bandState = 0.0f;
+        didRecover = true;
     }
 
     const auto safeInput = finiteOr (input, 0.0f);
+    didRecover = didRecover || !std::isfinite (input);
     const auto damping = filterDamping (resonance);
     const auto coefficient =
         stateVariableFilterCoefficient (cutoffHz, resonance, sampleRate);
@@ -122,8 +126,12 @@ inline StateVariableFilterFrame processStateVariableFilter (
     {
         lowState = 0.0f;
         bandState = 0.0f;
+        if (recovered)
+            *recovered = true;
         return {};
     }
+    if (recovered)
+        *recovered = didRecover;
     return {lowState, high, bandState, lowState + high};
 }
 
@@ -141,4 +149,4 @@ inline float selectFilterOutput (
     return 0.0f;
 }
 
-} // namespace Steinberg::Vst::SammyBlaze
+} // namespace SammyBlaze::AudioCore

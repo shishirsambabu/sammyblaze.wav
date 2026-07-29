@@ -1,5 +1,5 @@
-#include "dsp.h"
-#include "presets.h"
+#include "sammyblaze/audio_core/dsp.h"
+#include "sammyblaze/audio_core/presets.h"
 
 #include <array>
 #include <cmath>
@@ -8,14 +8,14 @@
 #include <iostream>
 #include <limits>
 
-namespace SammyBlaze = Steinberg::Vst::SammyBlaze;
+namespace Core = ::SammyBlaze::AudioCore;
 
 namespace {
 
 constexpr double twoPi = 6.28318530717958647692;
 
 bool validatePreset (
-    const SammyBlaze::SynthPreset& preset,
+    const Core::SynthPreset& preset,
     double sampleRate,
     float brightness,
     float& maximumMagnitude)
@@ -36,13 +36,13 @@ bool validatePreset (
             (sample % 997 == 0 ? 0.5f : 0.0f);
         const auto envelope =
             static_cast<float> (sample % 4096) / 4095.0f;
-        const auto cutoff = SammyBlaze::effectiveFilterCutoff (
+        const auto cutoff = Core::effectiveFilterCutoff (
             preset.filterCutoffHz,
             preset.filterEnvelope,
             envelope,
             brightness,
             sampleRate);
-        const auto frame = SammyBlaze::processStateVariableFilter (
+        const auto frame = Core::processStateVariableFilter (
             excitation,
             cutoff,
             preset.filterResonance,
@@ -50,7 +50,7 @@ bool validatePreset (
             low,
             band);
         const auto output =
-            SammyBlaze::selectFilterOutput (frame, preset.filterType);
+            Core::selectFilterOutput (frame, preset.filterType);
         if (!std::isfinite (output) || !std::isfinite (low) ||
             !std::isfinite (band))
         {
@@ -74,11 +74,11 @@ bool validateStabilityBoundary ()
 
     for (const auto resonance : resonances)
     {
-        const auto damping = SammyBlaze::filterDamping (resonance);
+        const auto damping = Core::filterDamping (resonance);
         for (const auto ratio : cutoffRatios)
         {
             const auto coefficient =
-                SammyBlaze::stateVariableFilterCoefficient (
+                Core::stateVariableFilterCoefficient (
                     static_cast<float> (sampleRate) * ratio,
                     resonance,
                     sampleRate);
@@ -101,7 +101,7 @@ bool validateStabilityBoundary ()
                     static_cast<float> ((noise >> 8U) & 0x00FFFFFFU) /
                         static_cast<float> (0x007FFFFFU) -
                     1.0f;
-                const auto frame = SammyBlaze::processStateVariableFilter (
+                const auto frame = Core::processStateVariableFilter (
                     excitation,
                     static_cast<float> (sampleRate) * ratio,
                     resonance,
@@ -127,7 +127,7 @@ bool validateNonFiniteContainment ()
 {
     float low = std::numeric_limits<float>::infinity ();
     float band = std::numeric_limits<float>::quiet_NaN ();
-    const auto frame = SammyBlaze::processStateVariableFilter (
+    const auto frame = Core::processStateVariableFilter (
         std::numeric_limits<float>::quiet_NaN (),
         std::numeric_limits<float>::infinity (),
         std::numeric_limits<float>::quiet_NaN (),
@@ -144,14 +144,14 @@ std::size_t countLegacyUnsafeFactoryScenarios ()
     constexpr std::array<double, 5> sampleRates {
         32000.0, 44100.0, 48000.0, 96000.0, 192000.0};
     std::size_t unsafe = 0;
-    for (std::size_t program = 0; program < SammyBlaze::kPresetCount; ++program)
+    for (std::size_t program = 0; program < Core::kPresetCount; ++program)
     {
         const auto preset =
-            SammyBlaze::presetForProgram (static_cast<std::uint8_t> (program));
-        const auto damping = SammyBlaze::filterDamping (preset.filterResonance);
+            Core::presetForProgram (static_cast<std::uint8_t> (program));
+        const auto damping = Core::filterDamping (preset.filterResonance);
         for (const auto sampleRate : sampleRates)
         {
-            const auto cutoff = SammyBlaze::effectiveFilterCutoff (
+            const auto cutoff = Core::effectiveFilterCutoff (
                 preset.filterCutoffHz,
                 preset.filterEnvelope,
                 1.0f,
@@ -159,9 +159,9 @@ std::size_t countLegacyUnsafeFactoryScenarios ()
                 sampleRate);
             const auto legacyCoefficient = std::clamp (
                 2.0f * std::sin (
-                    SammyBlaze::kPi * cutoff / static_cast<float> (sampleRate)),
-                SammyBlaze::kMinimumFilterCoefficient,
-                SammyBlaze::kLegacyFilterCoefficientLimit);
+                    Core::kPi * cutoff / static_cast<float> (sampleRate)),
+                Core::kMinimumFilterCoefficient,
+                Core::kLegacyFilterCoefficientLimit);
             if (legacyCoefficient * legacyCoefficient +
                     2.0f * damping * legacyCoefficient >=
                 4.0f)
@@ -181,10 +181,10 @@ int main ()
 
     float maximumMagnitude = 0.0f;
     std::size_t renderedScenarios = 0;
-    for (std::size_t program = 0; program < SammyBlaze::kPresetCount; ++program)
+    for (std::size_t program = 0; program < Core::kPresetCount; ++program)
     {
         const auto preset =
-            SammyBlaze::presetForProgram (static_cast<std::uint8_t> (program));
+            Core::presetForProgram (static_cast<std::uint8_t> (program));
         if (preset.program != program || preset.name == nullptr ||
             !std::isfinite (preset.filterCutoffHz) ||
             !std::isfinite (preset.filterResonance) ||
@@ -224,7 +224,7 @@ int main ()
         return 1;
     }
 
-    std::cout << "PASS: " << SammyBlaze::kPresetCount
+    std::cout << "PASS: " << Core::kPresetCount
               << " factory programs, " << renderedScenarios
               << " rate/brightness renders, stability stress, finite output\n"
               << "Legacy coefficient would cross the stability boundary in "

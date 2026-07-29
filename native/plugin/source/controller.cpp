@@ -3,14 +3,15 @@
 #include "base/source/fstreamer.h"
 #include "ids.h"
 #include "pluginterfaces/base/ustring.h"
-#include "presets.h"
 #include "public.sdk/source/vst/vstparameters.h"
+#include "sammyblaze/audio_core/presets.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 
 namespace Steinberg::Vst::SammyBlaze {
+namespace Core = ::SammyBlaze::AudioCore;
 namespace {
 
 ParamValue logarithmicNormalized (float value, float minimum, float maximum)
@@ -50,16 +51,16 @@ tresult PLUGIN_API Controller::initialize (FUnknown* context)
     parameters.addParameter (
         STR16 ("Chorus Mix"), STR16 ("%"), 0, 0.20, ParameterInfo::kCanAutomate, kChorusMixId);
 
-    const auto defaultPatch = presetForProgram (0);
+    const auto defaultPatch = Core::presetForProgram (0);
     auto* sound = new StringListParameter (
         STR16 ("Factory Sound"),
         kSoundProgramId,
         nullptr,
         ParameterInfo::kCanAutomate | ParameterInfo::kIsList |
             ParameterInfo::kIsProgramChange);
-    for (std::size_t program = 0; program < kPresetCount; ++program)
+    for (std::size_t program = 0; program < Core::kPresetCount; ++program)
     {
-        appendAscii (*sound, presetName (program));
+        appendAscii (*sound, Core::presetName (program));
     }
     parameters.addParameter (sound);
 
@@ -167,8 +168,8 @@ tresult PLUGIN_API Controller::setComponentState (IBStream* state)
     {
         setParamNormalized (
             kSoundProgramId,
-            static_cast<ParamValue> (program % kPresetCount) /
-                static_cast<ParamValue> (kPresetCount - 1));
+            static_cast<ParamValue> (program % Core::kPresetCount) /
+                static_cast<ParamValue> (Core::kPresetCount - 1));
     }
 
     uint32 discrete = 0;

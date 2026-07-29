@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace Steinberg::Vst::SammyBlaze {
+namespace SammyBlaze::AudioCore {
 
 enum class Waveform : std::uint8_t
 {
@@ -58,4 +58,4 @@ inline constexpr std::size_t kPresetsPerCategory = 12;
 SynthPreset presetForProgram (std::uint8_t program) noexcept;
 const char* presetName (std::size_t program) noexcept;
 
-} // namespace Steinberg::Vst::SammyBlaze
+} // namespace SammyBlaze::AudioCore
