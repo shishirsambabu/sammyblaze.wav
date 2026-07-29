@@ -56,6 +56,19 @@ if (-not (Test-Path -LiteralPath $binary)) {
 }
 
 if ($Validate) {
+    & $cmake --build $buildDirectory --config $Configuration --target SammyBlazeDspValidation
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native DSP validation build failed"
+    }
+    $dspValidator = Join-Path $buildDirectory "native\plugin\$Configuration\SammyBlazeDspValidation.exe"
+    if (-not (Test-Path -LiteralPath $dspValidator)) {
+        $dspValidator = Join-Path $buildDirectory "bin\$Configuration\SammyBlazeDspValidation.exe"
+    }
+    & $dspValidator
+    if ($LASTEXITCODE -ne 0) {
+        throw "Native DSP validation failed"
+    }
+
     & $cmake --build $buildDirectory --config $Configuration --target validator
     if ($LASTEXITCODE -ne 0) {
         throw "Steinberg validator build failed"

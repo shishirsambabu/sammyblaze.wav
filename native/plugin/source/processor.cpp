@@ -1,6 +1,7 @@
 #include "processor.h"
 
 #include "base/source/fstreamer.h"
+#include "dsp.h"
 #include "ids.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
@@ -231,12 +232,14 @@ tresult PLUGIN_API Processor::process (ProcessData& data)
                 sampleRate *
                 (0.018 + 0.005 * (0.5 + 0.5 * std::sin (lfoPhase * twoPi * 0.73))));
             const auto chorusTap = tap (std::max<std::size_t> (1, chorusMod));
-            effectBuffer[effectWriteIndex] = std::clamp (
+            const auto feedbackSample =
                 mixed + delayTap * static_cast<float> (smoothedDelayMix * 0.42) +
                     (reverbA + reverbB) *
-                        static_cast<float> (smoothedReverbMix * 0.24),
-                -2.0f,
-                2.0f);
+                        static_cast<float> (smoothedReverbMix * 0.24);
+            effectBuffer[effectWriteIndex] =
+                std::isfinite (feedbackSample)
+                    ? std::clamp (feedbackSample, -2.0f, 2.0f)
+                    : 0.0f;
             effectWriteIndex = (effectWriteIndex + 1) % bufferSize;
 
             left += delayTap * static_cast<float> (smoothedDelayMix * 0.62);
@@ -246,8 +249,10 @@ tresult PLUGIN_API Processor::process (ProcessData& data)
             left += chorusTap * static_cast<float> (smoothedChorusMix * 0.34);
             right -= chorusTap * static_cast<float> (smoothedChorusMix * 0.28);
         }
-        output[0][sample] = std::tanh (left * 1.15f) * 0.86f;
-        output[1][sample] = std::tanh (right * 1.15f) * 0.86f;
+        output[0][sample] =
+            std::isfinite (left) ? std::tanh (left * 1.15f) * 0.86f : 0.0f;
+        output[1][sample] =
+            std::isfinite (right) ? std::tanh (right * 1.15f) * 0.86f : 0.0f;
     }
     return kResultOk;
 }
@@ -330,30 +335,20 @@ float Processor::renderVoice (Voice& voice, double sampleRate)
     oscillators /= std::sqrt (static_cast<float> (unisonCount));
     oscillators *= voice.velocity * voice.envelope;
 
-    const auto envelopeOctaves = preset.filterEnvelope * voice.envelope * 4.0f;
-    const auto brightnessOctaves =
-        static_cast<float> ((smoothedBrightness - 0.5) * 4.0);
-    const auto cutoff = std::clamp (
-        preset.filterCutoffHz * std::pow (2.0f, envelopeOctaves + brightnessOctaves),
-        25.0f,
-        static_cast<float> (sampleRate * 0.42));
-    const auto coefficient = std::clamp (
-        2.0f * std::sin (
-                   3.14159265358979323846f * cutoff / static_cast<float> (sampleRate)),
-        0.001f,
-        0.95f);
-    const auto damping = 1.95f - preset.filterResonance * 1.55f;
-    voice.filterLow += coefficient * voice.filterBand;
-    const auto high = oscillators - voice.filterLow - damping * voice.filterBand;
-    voice.filterBand += coefficient * high;
-    switch (preset.filterType)
-    {
-        case FilterType::lowpass: return voice.filterLow;
-        case FilterType::highpass: return high;
-        case FilterType::bandpass: return voice.filterBand;
-        case FilterType::notch: return voice.filterLow + high;
-    }
-    return oscillators;
+    const auto cutoff = effectiveFilterCutoff (
+        preset.filterCutoffHz,
+        preset.filterEnvelope,
+        voice.envelope,
+        static_cast<float> (smoothedBrightness),
+        sampleRate);
+    const auto filter = processStateVariableFilter (
+        oscillators,
+        cutoff,
+        preset.filterResonance,
+        sampleRate,
+        voice.filterLow,
+        voice.filterBand);
+    return selectFilterOutput (filter, preset.filterType);
 }
 
 void Processor::handleBridge ()

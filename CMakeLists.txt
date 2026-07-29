@@ -7,6 +7,8 @@ project(
     LANGUAGES CXX
 )
 
+include(CTest)
+
 set(VST3_SDK_ROOT "" CACHE PATH "Path to a pinned Steinberg VST3 SDK checkout")
 if(NOT EXISTS "${VST3_SDK_ROOT}/CMakeLists.txt")
     message(

@@ -28,3 +28,21 @@ smtg_target_configure_version_file(SammyBlazeVST3)
 if(MSVC)
     target_compile_options(SammyBlazeVST3 PRIVATE /W4 /permissive-)
 endif()
+
+if(BUILD_TESTING)
+    add_executable(SammyBlazeDspValidation
+        tests/dsp_validation.cpp
+        source/dsp.h
+        source/presets.cpp
+        source/presets.h
+    )
+    target_include_directories(SammyBlazeDspValidation PRIVATE source)
+    target_compile_features(SammyBlazeDspValidation PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(SammyBlazeDspValidation PRIVATE /W4 /permissive-)
+    endif()
+    add_test(
+        NAME SammyBlazeDspValidation
+        COMMAND SammyBlazeDspValidation
+    )
+endif()
