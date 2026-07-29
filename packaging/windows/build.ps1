@@ -4,6 +4,13 @@ param(
     [string]$OutputRoot = "artifacts\windows",
     [string]$ModelPath = "models\hand_landmarker.task",
     [string]$AudioCoreDllPath = "D:\SammyBlazeBuild\native\bin\Release\SammyBlazeAudioCore.dll",
+    [long]$BaselineBundleBytes = 1047945803,
+    [long]$MaximumBundleBytes = 450000000,
+    [ValidateRange(1, 100000)]
+    [int]$MaximumBundleFiles = 1500,
+    [switch]$SmokeTest,
+    [ValidateRange(1, 60)]
+    [int]$SmokeSeconds = 10,
     [switch]$SkipInstall,
     [switch]$DryRun
 )
@@ -81,6 +88,11 @@ $distPath = Resolve-AbsolutePath -Path $OutputRoot -BasePath $repoRoot
 $workPath = Join-Path $distPath "build"
 $specPath = Join-Path $distPath "spec"
 $bundlePath = Join-Path $distPath "SammyBlaze"
+$hooksPath = Join-Path $PSScriptRoot "hooks"
+$runtimeHooksPath = Join-Path $PSScriptRoot "runtime_hooks"
+$mediaPipeRuntimeHook = Join-Path $runtimeHooksPath "pyi_rth_mediapipe_minimal.py"
+$packageProbeRuntimeHook = Join-Path $runtimeHooksPath "pyi_rth_sammyblaze_package_probe.py"
+$bundleVerifier = Join-Path $PSScriptRoot "verify_bundle.py"
 
 # Validate release-critical inputs before installing dependencies or changing output folders.
 if (-not (Test-Path -LiteralPath $resolvedModelPath -PathType Leaf)) {
@@ -88,6 +100,16 @@ if (-not (Test-Path -LiteralPath $resolvedModelPath -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $resolvedAudioCoreDllPath -PathType Leaf)) {
     throw "Native audio core DLL is missing: $resolvedAudioCoreDllPath"
+}
+foreach ($requiredPackagingFile in @(
+    $hooksPath,
+    $mediaPipeRuntimeHook,
+    $packageProbeRuntimeHook,
+    $bundleVerifier
+)) {
+    if (-not (Test-Path -LiteralPath $requiredPackagingFile)) {
+        throw "Packaging helper is missing: $requiredPackagingFile"
+    }
 }
 
 $installArguments = @("-m", "pip", "install", "-e", ".[package,vision,midi-native,ui]")
@@ -104,9 +126,21 @@ $pyInstallerArguments = @(
     "--paths", (Join-Path $repoRoot "src"),
     "--add-data", "$resolvedModelPath;models",
     "--add-binary", "$resolvedAudioCoreDllPath;.",
-    "--collect-all", "PySide6",
-    "--collect-all", "mediapipe",
+    "--additional-hooks-dir", $hooksPath,
+    "--runtime-hook", $mediaPipeRuntimeHook,
+    "--runtime-hook", $packageProbeRuntimeHook,
     "--hidden-import", "mido.backends.rtmidi",
+    "--exclude-module", "matplotlib",
+    "--exclude-module", "mpl_toolkits",
+    "--exclude-module", "scipy",
+    "--exclude-module", "PIL",
+    "--exclude-module", "IPython",
+    "--exclude-module", "jupyter",
+    "--exclude-module", "notebook",
+    "--exclude-module", "pytest",
+    "--exclude-module", "tensorflow",
+    "--exclude-module", "torch",
+    "--exclude-module", "jax",
     (Join-Path $repoRoot "src\handmusic\desktop_entry.py")
 )
 
@@ -117,6 +151,10 @@ if ($DryRun) {
     }
     Write-Host ("DRY RUN: " + (Format-Command -Executable $resolvedPython -Arguments $pyInstallerArguments))
     Write-Host "DRY RUN: expected standalone bundle: $bundlePath"
+    Write-Host "DRY RUN: post-build verifier: $bundleVerifier"
+    if ($SmokeTest) {
+        Write-Host "DRY RUN: offscreen package smoke duration: $SmokeSeconds seconds"
+    }
     return
 }
 
@@ -153,6 +191,65 @@ $bundledModel = Assert-SingleBundledFile `
     -BundlePath $bundlePath `
     -FileName "hand_landmarker.task" `
     -Description "MediaPipe model"
+
+$analysisTocPath = Join-Path $workPath "SammyBlaze\Analysis-00.toc"
+$verifyArguments = @(
+    $bundleVerifier,
+    "--bundle", $bundlePath,
+    "--analysis-toc", $analysisTocPath,
+    "--baseline-bytes", $BaselineBundleBytes,
+    "--max-bytes", $MaximumBundleBytes,
+    "--max-files", $MaximumBundleFiles
+)
+& $resolvedPython @verifyArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Standalone bundle verification failed with exit code $LASTEXITCODE."
+}
+
+if ($SmokeTest) {
+    $probeResultPath = Join-Path $distPath "package-smoke-result.json"
+    if (Test-Path -LiteralPath $probeResultPath) {
+        Remove-Item -LiteralPath $probeResultPath -Force
+    }
+
+    $priorQtPlatform = $env:QT_QPA_PLATFORM
+    $priorProbePath = $env:SAMMYBLAZE_PACKAGE_PROBE
+    $process = $null
+    try {
+        $env:QT_QPA_PLATFORM = "offscreen"
+        $env:SAMMYBLAZE_PACKAGE_PROBE = $probeResultPath
+        $process = Start-Process `
+            -FilePath $executablePath `
+            -PassThru `
+            -WindowStyle Hidden
+        Start-Sleep -Seconds $SmokeSeconds
+        $process.Refresh()
+        if ($process.HasExited) {
+            throw "Packaged executable exited during the $SmokeSeconds-second smoke test with code $($process.ExitCode)."
+        }
+        if (-not (Test-Path -LiteralPath $probeResultPath -PathType Leaf)) {
+            throw "Packaged runtime probe did not create its result: $probeResultPath"
+        }
+        $probeResult = Get-Content -LiteralPath $probeResultPath -Raw | ConvertFrom-Json
+        if ($probeResult.status -ne "ok") {
+            throw "Packaged runtime probe failed: $($probeResult.error)"
+        }
+        Write-Host "Offscreen package smoke: PASS ($SmokeSeconds seconds, PID $($process.Id))"
+        Write-Host "Runtime probe: PySide6=$($probeResult.pyside6), OpenCV=$($probeResult.opencv), MediaPipe=$($probeResult.mediapipe), SoundDevice=$($probeResult.sounddevice), MIDI=$($probeResult.midi), NativeAudioABI=$($probeResult.nativeAudioAbi)"
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Refresh()
+            if (-not $process.HasExited) {
+                Stop-Process -Id $process.Id -Force
+                $process.WaitForExit()
+            }
+            $process.Dispose()
+        }
+        $env:QT_QPA_PLATFORM = $priorQtPlatform
+        $env:SAMMYBLAZE_PACKAGE_PROBE = $priorProbePath
+    }
+}
 
 Write-Host "Windows standalone bundle: $bundlePath"
 Write-Host "Bundled audio core: $bundledDll"
