@@ -123,6 +123,24 @@ def test_audio_callback_failure_is_visible_on_perform_page(
     window.close()
 
 
+def test_audio_backend_is_visible_on_perform_page(
+    application: QApplication,
+    tmp_path,
+) -> None:
+    window = PerformerWindow(preset_directory=tmp_path)
+
+    window._set_audio_health("Native C++ audio core ready")
+    application.processEvents()
+    assert window.metric_audio.value_text == "NATIVE CORE"
+
+    window._set_audio_health(
+        "Native C++ audio core unavailable; Python compatibility synth is active"
+    )
+    application.processEvents()
+    assert window.metric_audio.value_text == "PYTHON FALLBACK"
+    window.close()
+
+
 def test_worker_marshals_live_controls_onto_runtime_thread(
     application: QApplication,
 ) -> None:

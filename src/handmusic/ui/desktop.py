@@ -9,7 +9,7 @@ from typing import Any
 
 from handmusic import __version__
 from handmusic.app import default_runtime, run_camera
-from handmusic.music.builtin_synth import BuiltinSynthOutput
+from handmusic.music.audio_output import create_builtin_audio_output
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput, PluginBridgeOutput
 from handmusic.music.presets import (
     FILTER_TYPES,
@@ -277,10 +277,16 @@ else:
             error_message: str | None = None
             try:
                 if self.output_mode == "synth":
-                    self.state_changed.emit("Starting built-in audio engine...")
-                    output: Any = BuiltinSynthOutput(self.sound_program)
-                    self.midi_health.emit("Audio: built-in 120-sound synth")
-                    self.audio_health.emit("Built-in synth ready")
+                    self.state_changed.emit("Starting shared audio engine...")
+                    selection = create_builtin_audio_output(self.sound_program)
+                    output: Any = selection.output
+                    self.midi_health.emit(
+                        f"Audio: {selection.backend_label} (120 sounds)"
+                    )
+                    self.audio_health.emit(
+                        selection.warning
+                        or f"{selection.backend_label} ready"
+                    )
                 elif self.output_mode == "midi":
                     self.state_changed.emit("Connecting MIDI...")
                     output = MidoOutput(self.midi_port)
@@ -1282,6 +1288,11 @@ else:
             elif "underflow" in lowered or "overflow" in lowered:
                 label = "AUDIO XRUN"
                 self._set_status(text)
+            elif "compatibility synth" in lowered:
+                label = "PYTHON FALLBACK"
+                self._set_status(text)
+            elif "native c++ audio core" in lowered:
+                label = "NATIVE CORE"
             else:
                 label = "SYNTH READY"
             self.metric_audio.set_value(label)

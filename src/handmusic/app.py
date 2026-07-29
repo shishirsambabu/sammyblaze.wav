@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import signal
+import sys
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -18,7 +19,7 @@ from handmusic.diagnostics import collect_diagnostics, render_diagnostics
 from handmusic.gestures.features import extract_features
 from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
 from handmusic.ml.session import record_camera_session
-from handmusic.music.builtin_synth import BuiltinSynthOutput
+from handmusic.music.audio_output import create_builtin_audio_output
 from handmusic.music.chord_engine import ChordSpec, chord_notes
 from handmusic.music.expression import ExpressionController, ExpressionState
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput, PluginBridgeOutput
@@ -610,7 +611,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run or args.output == "null":
         output = MemoryMidiOutput()
     elif args.output == "synth":
-        output = BuiltinSynthOutput(args.sound_program)
+        selection = create_builtin_audio_output(args.sound_program)
+        output = selection.output
+        print(f"Audio backend: {selection.backend_label}")
+        if selection.warning:
+            print(f"Warning: {selection.warning}", file=sys.stderr)
     elif args.output == "midi":
         output = MidoOutput(midi_port)
     elif args.output == "plugin":

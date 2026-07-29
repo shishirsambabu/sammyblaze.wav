@@ -56,3 +56,12 @@ their DSP boundaries and expose recoveries instead of silently propagating NaN s
 native gate shares filter helpers and the factory catalog with the VST build; the standalone gate
 renders all factory programs through `SynthEngine`. Finiteness is necessary but not sufficient:
 real-time deadline headroom remains a separate Phase 9 acceptance gate.
+
+## ADR-011: standalone and VST share one native synthesis engine
+
+The Python renderer remains a development compatibility path, not the commercial real-time
+engine. A versioned C ABI wraps the allocation-free native `SynthEngine`; the standalone
+SoundDevice callback delivers bounded commands and asks that engine for interleaved float32
+audio. The VST processor schedules host and bridge commands into the same engine implementation.
+This removes duplicated oscillator/filter/effect behavior and makes one DSP validation matrix
+apply to both products without embedding Python in the plug-in.
