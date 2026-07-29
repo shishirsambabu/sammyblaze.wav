@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import pi, sin
+from math import isfinite, pi, sin, tan
 from queue import SimpleQueue
 from typing import Any
 
@@ -12,6 +12,29 @@ from handmusic.music.presets import Preset, get_preset
 _MAX_VOICES = 24
 _MAX_UNISON = 3
 _MIN_TIME_MS = 0.5
+_MAX_FILTER_STATE = 1_000_000.0
+
+
+@dataclass(frozen=True, slots=True)
+class AudioCallbackHealth:
+    """Thread-safe snapshot of failures observed by the audio callback."""
+
+    callback_count: int
+    status_event_count: int
+    output_underflows: int
+    output_overflows: int
+    render_failures: int
+    nonfinite_recoveries: int
+    last_status: str | None
+    last_error: str | None
+
+    @property
+    def healthy(self) -> bool:
+        return not (
+            self.status_event_count
+            or self.render_failures
+            or self.nonfinite_recoveries
+        )
 
 
 @dataclass(slots=True)
@@ -52,6 +75,8 @@ class SynthEngine:
         self._effect_buffer = np.zeros(int(self.sample_rate * 2.6), dtype=np.float64)
         self._effect_index = 0
         self._rng = np.random.default_rng(0x5A4D4D59)
+        self.nonfinite_recoveries = 0
+        self.last_render_error: str | None = None
 
     def note_on(self, note: int, velocity: int) -> None:
         self._validate_midi(note)
@@ -164,7 +189,17 @@ class SynthEngine:
 
         mono *= self.master_gain * self.expression * 0.13
         output = self._apply_effects(mono)
-        return (np.tanh(output * 1.15) * 0.86).astype(np.float32, copy=False)
+        limited = np.tanh(output * 1.15) * 0.86
+        if not np.isfinite(limited).all():
+            self._record_nonfinite_recovery(
+                "Non-finite samples reached the synth output boundary"
+            )
+            limited = np.nan_to_num(limited, nan=0.0, posinf=0.86, neginf=-0.86)
+            self._effect_buffer.fill(0.0)
+            for voice in self.voices:
+                voice.filter_low = 0.0
+                voice.filter_band = 0.0
+        return limited.astype(np.float32, copy=False)
 
     def _render_voice(self, voice: _Voice, frame_count: int) -> np.ndarray:
         envelope = self._render_envelope(voice, frame_count)
@@ -239,9 +274,22 @@ class SynthEngine:
     ) -> np.ndarray:
         preset = voice.preset
         output = np.empty_like(signal)
-        damping = 1.95 - preset.filter_resonance * 1.55
+        resonance = max(0.0, min(float(preset.filter_resonance), 1.0))
+        quality = 0.5 * (16.0**resonance)
+        damping = 1.0 / quality
         brightness_octaves = (self.brightness - 0.5) * 4.0
-        for index, sample in enumerate(signal):
+        integrator_low = float(voice.filter_low)
+        integrator_band = float(voice.filter_band)
+        if not self._filter_state_is_valid(integrator_low, integrator_band):
+            self._record_nonfinite_recovery("Invalid filter state reset before rendering")
+            integrator_low = 0.0
+            integrator_band = 0.0
+
+        for index, sample_value in enumerate(signal):
+            sample = float(sample_value)
+            if not isfinite(sample):
+                self._record_nonfinite_recovery("Non-finite oscillator sample rejected")
+                sample = 0.0
             cutoff = max(
                 25.0,
                 min(
@@ -251,22 +299,49 @@ class SynthEngine:
                     self.sample_rate * 0.42,
                 ),
             )
-            coefficient = max(
-                0.001,
-                min(2.0 * sin(pi * cutoff / self.sample_rate), 0.95),
-            )
-            voice.filter_low += coefficient * voice.filter_band
-            high = sample - voice.filter_low - damping * voice.filter_band
-            voice.filter_band += coefficient * high
+            coefficient = tan(pi * cutoff / self.sample_rate)
+            denominator = 1.0 + coefficient * (coefficient + damping)
+            a1 = 1.0 / denominator
+            a2 = coefficient * a1
+            a3 = coefficient * a2
+            input_minus_low = sample - integrator_low
+            band = a1 * integrator_band + a2 * input_minus_low
+            low = integrator_low + a2 * integrator_band + a3 * input_minus_low
+            high = sample - damping * band - low
+            next_band = 2.0 * band - integrator_band
+            next_low = 2.0 * low - integrator_low
+            if not self._filter_state_is_valid(next_low, next_band):
+                self._record_nonfinite_recovery("Unstable filter state reset while rendering")
+                integrator_low = 0.0
+                integrator_band = 0.0
+                output[index] = 0.0
+                continue
+            integrator_low = next_low
+            integrator_band = next_band
             if preset.filter_type == "lowpass":
-                output[index] = voice.filter_low
+                output[index] = low
             elif preset.filter_type == "highpass":
                 output[index] = high
             elif preset.filter_type == "bandpass":
-                output[index] = voice.filter_band
+                output[index] = band
             else:
-                output[index] = voice.filter_low + high
+                output[index] = low + high
+        voice.filter_low = integrator_low
+        voice.filter_band = integrator_band
         return output
+
+    @staticmethod
+    def _filter_state_is_valid(low: float, band: float) -> bool:
+        return (
+            isfinite(low)
+            and isfinite(band)
+            and abs(low) <= _MAX_FILTER_STATE
+            and abs(band) <= _MAX_FILTER_STATE
+        )
+
+    def _record_nonfinite_recovery(self, message: str) -> None:
+        self.nonfinite_recoveries += 1
+        self.last_render_error = message
 
     def _apply_effects(self, mono: np.ndarray) -> np.ndarray:
         stereo = np.empty((len(mono), 2), dtype=np.float64)
@@ -386,6 +461,16 @@ class BuiltinSynthOutput:
             sample_rate = float(device["default_samplerate"])
             self._engine = SynthEngine(sample_rate, program)
             self._events: SimpleQueue[tuple[str, object, object | None]] = SimpleQueue()
+            self._callback_reports: SimpleQueue[str] = SimpleQueue()
+            self._callback_count = 0
+            self._status_event_count = 0
+            self._output_underflows = 0
+            self._output_overflows = 0
+            self._render_failures = 0
+            self._reported_nonfinite_recoveries = 0
+            self._last_status: str | None = None
+            self._last_error: str | None = None
+            self._closed = False
             self._stream: Any = sounddevice.OutputStream(
                 samplerate=sample_rate,
                 blocksize=block_size,
@@ -397,7 +482,29 @@ class BuiltinSynthOutput:
             self._stream.start()
         except Exception as exc:
             raise RuntimeError(f"Could not start the built-in audio output: {exc}") from exc
-        self._closed = False
+
+    @property
+    def callback_health(self) -> AudioCallbackHealth:
+        """Return callback diagnostics without blocking or touching the stream."""
+
+        return AudioCallbackHealth(
+            callback_count=self._callback_count,
+            status_event_count=self._status_event_count,
+            output_underflows=self._output_underflows,
+            output_overflows=self._output_overflows,
+            render_failures=self._render_failures,
+            nonfinite_recoveries=self._reported_nonfinite_recoveries,
+            last_status=self._last_status,
+            last_error=self._last_error,
+        )
+
+    def drain_callback_reports(self) -> tuple[str, ...]:
+        """Return new callback warnings/errors accumulated since the last drain."""
+
+        reports: list[str] = []
+        while not self._callback_reports.empty():
+            reports.append(self._callback_reports.get_nowait())
+        return tuple(reports)
 
     def note_on(self, note: int, velocity: int) -> None:
         self._events.put(("note_on", note, velocity))
@@ -437,6 +544,19 @@ class BuiltinSynthOutput:
         _time: object,
         _status: object,
     ) -> None:
+        self._callback_count += 1
+        if _status:
+            status_text = str(_status)
+            self._status_event_count += 1
+            self._output_underflows += int(
+                bool(getattr(_status, "output_underflow", False))
+            )
+            self._output_overflows += int(
+                bool(getattr(_status, "output_overflow", False))
+            )
+            if status_text != self._last_status:
+                self._callback_reports.put(f"Audio callback status: {status_text}")
+            self._last_status = status_text
         try:
             while not self._events.empty():
                 kind, data1, data2 = self._events.get_nowait()
@@ -458,8 +578,24 @@ class BuiltinSynthOutput:
                 else:
                     self._engine.program_change(int(data1))
             output[:] = self._engine.render(frame_count)
-        except Exception:
+            recoveries = (
+                self._engine.nonfinite_recoveries
+                - self._reported_nonfinite_recoveries
+            )
+            if recoveries > 0:
+                self._reported_nonfinite_recoveries += recoveries
+                message = self._engine.last_render_error or "Unknown numerical recovery"
+                self._callback_reports.put(
+                    f"Audio render recovered from {recoveries} non-finite event(s): "
+                    f"{message}"
+                )
+        except Exception as exc:
+            self._render_failures += 1
+            error = f"{type(exc).__name__}: {exc}"
+            if error != self._last_error:
+                self._callback_reports.put(f"Audio render failed: {error}")
+            self._last_error = error
             output.fill(0.0)
 
 
-__all__ = ["BuiltinSynthOutput", "SynthEngine"]
+__all__ = ["AudioCallbackHealth", "BuiltinSynthOutput", "SynthEngine"]
