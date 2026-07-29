@@ -209,7 +209,7 @@ $resolvedEvidenceRoot = Resolve-AbsolutePath -Path $EvidenceRoot
 if (-not (Test-Path -LiteralPath $resolvedInstaller -PathType Leaf)) {
     throw "Installer is missing: $resolvedInstaller"
 }
-if ((Get-SammyBlazeArpEntries).Count -gt 0) {
+if (@(Get-SammyBlazeArpEntries).Count -gt 0) {
     throw "A current-user SammyBlaze installation already exists; refusing to overlap it."
 }
 
@@ -251,7 +251,7 @@ try {
         -Arguments $installArguments `
         -Description "Silent custom-path installation"
     $payload = Assert-InstalledPayload -AppRoot $appRoot -Vst3Root $vst3Root
-    $arpEntries = Get-SammyBlazeArpEntries
+    $arpEntries = @(Get-SammyBlazeArpEntries)
     if ($arpEntries.Count -ne 1) {
         throw "Expected one current-user ARP entry after install; found $($arpEntries.Count)."
     }
@@ -317,7 +317,7 @@ try {
         -Arguments $repairArguments `
         -Description "Same-version repair"
     $repairPayload = Assert-InstalledPayload -AppRoot $appRoot -Vst3Root $vst3Root
-    $repairArpEntries = Get-SammyBlazeArpEntries
+    $repairArpEntries = @(Get-SammyBlazeArpEntries)
     if ($repairArpEntries.Count -ne 1) {
         throw "Expected one ARP entry after repair; found $($repairArpEntries.Count)."
     }
@@ -360,7 +360,7 @@ try {
     if (-not (Test-Path -LiteralPath $foreignPlugin -PathType Leaf)) {
         throw "Uninstall removed an unrelated neighboring VST sentinel."
     }
-    if ((Get-SammyBlazeArpEntries).Count -ne 0) {
+    if (@(Get-SammyBlazeArpEntries).Count -ne 0) {
         throw "Uninstall left a current-user ARP entry."
     }
     $scenarios.Add([ordered]@{
