@@ -1,0 +1,19 @@
+version: 1
+key: C
+mode: major
+octave: 4
+quality: triad
+progression:
+  - root: C
+    quality: major
+  - root: A
+    quality: minor
+  - root: F
+    quality: major
+  - root: G
+    quality: major
+output:
+  default: null
+  midi_channel: 0
+  velocity: 96
+  soundfont: null

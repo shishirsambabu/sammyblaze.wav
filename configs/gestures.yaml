@@ -1,0 +1,46 @@
+version: 1
+discrete:
+  chord_shapes:
+    finger_order: [index, middle, ring, pinky, thumb]
+    hold_ms: 180
+    maximum_velocity: 0.25
+    mappings:
+      "10000": 0
+      "11000": 1
+      "11100": 2
+      "11110": 3
+      "11111": 4
+      "00011": 5
+      "10001": 6
+  fist:
+    action: stop_all
+    hold_ms: 120
+    cooldown_ms: 300
+    confidence: 0.70
+  swipe_right:
+    action: next_chord
+    velocity_threshold: 0.35
+    cooldown_ms: 500
+    confidence: 0.65
+  swipe_left:
+    action: previous_chord
+    velocity_threshold: 0.35
+    cooldown_ms: 500
+    confidence: 0.65
+  pinch:
+    action: cycle_scale_mode
+    hold_ms: 400
+    cooldown_ms: 500
+    confidence: 0.70
+continuous:
+  right_hand_y:
+    targets: [volume, expression]
+  right_hand_x:
+    target: chord_relative_scale_note
+  right_hand_z:
+    targets: [expression, brightness, delay]
+  right_hand_motion:
+    targets: [vibrato, chorus]
+  right_hand_pinch:
+    targets: [rearticulate, reverb]
+  smoothing: 0.2
