@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import isfinite, pi, sin, tan
+from math import isfinite, pi, sin, sqrt
 from queue import SimpleQueue
 from typing import Any
 
@@ -13,6 +13,67 @@ _MAX_VOICES = 24
 _MAX_UNISON = 3
 _MIN_TIME_MS = 0.5
 _MAX_FILTER_STATE = 1_000_000.0
+_MIN_FILTER_CUTOFF_HZ = 25.0
+_MAX_FILTER_NYQUIST_RATIO = 0.42
+_MIN_FILTER_COEFFICIENT = 0.001
+_LEGACY_FILTER_COEFFICIENT_LIMIT = 0.95
+_FILTER_STABILITY_MARGIN = 0.95
+
+
+def _filter_damping(resonance: float) -> float:
+    safe_resonance = resonance if isfinite(resonance) else 0.0
+    return 1.95 - max(0.0, min(safe_resonance, 1.0)) * 1.55
+
+
+def _maximum_stable_filter_coefficient(damping: float) -> float:
+    safe_damping = max(damping if isfinite(damping) else 1.95, 0.0001)
+    return _FILTER_STABILITY_MARGIN * (
+        sqrt(safe_damping * safe_damping + 4.0) - safe_damping
+    )
+
+
+def _state_variable_filter_coefficients(
+    cutoff_hz: np.ndarray,
+    resonance: float,
+    sample_rate: float,
+    *,
+    output: np.ndarray | None = None,
+) -> np.ndarray:
+    safe_sample_rate = max(sample_rate if isfinite(sample_rate) else 44_100.0, 1000.0)
+    maximum_cutoff = max(
+        _MIN_FILTER_CUTOFF_HZ,
+        safe_sample_rate * _MAX_FILTER_NYQUIST_RATIO,
+    )
+    coefficients = np.empty_like(cutoff_hz) if output is None else output
+    if coefficients is not cutoff_hz:
+        np.copyto(coefficients, cutoff_hz)
+    np.nan_to_num(
+        coefficients,
+        copy=False,
+        nan=_MIN_FILTER_CUTOFF_HZ,
+        posinf=_MIN_FILTER_CUTOFF_HZ,
+        neginf=_MIN_FILTER_CUTOFF_HZ,
+    )
+    np.clip(
+        coefficients,
+        _MIN_FILTER_CUTOFF_HZ,
+        maximum_cutoff,
+        out=coefficients,
+    )
+    coefficients *= pi / safe_sample_rate
+    np.sin(coefficients, out=coefficients)
+    coefficients *= 2.0
+    stable_limit = min(
+        _LEGACY_FILTER_COEFFICIENT_LIMIT,
+        _maximum_stable_filter_coefficient(_filter_damping(resonance)),
+    )
+    np.clip(
+        coefficients,
+        _MIN_FILTER_COEFFICIENT,
+        stable_limit,
+        out=coefficients,
+    )
+    return coefficients
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +135,7 @@ class SynthEngine:
         self._lfo_phase = 0.0
         self._effect_buffer = np.zeros(int(self.sample_rate * 2.6), dtype=np.float64)
         self._effect_index = 0
+        self._filter_coefficient_buffer = np.empty(0, dtype=np.float64)
         self._rng = np.random.default_rng(0x5A4D4D59)
         self.nonfinite_recoveries = 0
         self.last_render_error: str | None = None
@@ -275,9 +337,31 @@ class SynthEngine:
         preset = voice.preset
         output = np.empty_like(signal)
         resonance = max(0.0, min(float(preset.filter_resonance), 1.0))
-        quality = 0.5 * (16.0**resonance)
-        damping = 1.0 / quality
+        damping = _filter_damping(resonance)
         brightness_octaves = (self.brightness - 0.5) * 4.0
+        if len(self._filter_coefficient_buffer) < len(envelope):
+            self._filter_coefficient_buffer = np.empty(len(envelope), dtype=np.float64)
+        coefficient_values = self._filter_coefficient_buffer[: len(envelope)]
+        np.multiply(
+            envelope,
+            preset.filter_envelope * 4.0,
+            out=coefficient_values,
+        )
+        coefficient_values += brightness_octaves
+        np.exp2(coefficient_values, out=coefficient_values)
+        coefficient_values *= preset.filter_cutoff_hz
+        np.clip(
+            coefficient_values,
+            _MIN_FILTER_CUTOFF_HZ,
+            self.sample_rate * _MAX_FILTER_NYQUIST_RATIO,
+            out=coefficient_values,
+        )
+        _state_variable_filter_coefficients(
+            coefficient_values,
+            resonance,
+            self.sample_rate,
+            output=coefficient_values,
+        )
         integrator_low = float(voice.filter_low)
         integrator_band = float(voice.filter_band)
         if not self._filter_state_is_valid(integrator_low, integrator_band):
@@ -285,47 +369,33 @@ class SynthEngine:
             integrator_low = 0.0
             integrator_band = 0.0
 
-        for index, sample_value in enumerate(signal):
-            sample = float(sample_value)
-            if not isfinite(sample):
-                self._record_nonfinite_recovery("Non-finite oscillator sample rejected")
-                sample = 0.0
-            cutoff = max(
-                25.0,
-                min(
-                    preset.filter_cutoff_hz
-                    * 2.0
-                    ** (preset.filter_envelope * float(envelope[index]) * 4.0 + brightness_octaves),
-                    self.sample_rate * 0.42,
-                ),
-            )
-            coefficient = tan(pi * cutoff / self.sample_rate)
-            denominator = 1.0 + coefficient * (coefficient + damping)
-            a1 = 1.0 / denominator
-            a2 = coefficient * a1
-            a3 = coefficient * a2
-            input_minus_low = sample - integrator_low
-            band = a1 * integrator_band + a2 * input_minus_low
-            low = integrator_low + a2 * integrator_band + a3 * input_minus_low
-            high = sample - damping * band - low
-            next_band = 2.0 * band - integrator_band
-            next_low = 2.0 * low - integrator_low
-            if not self._filter_state_is_valid(next_low, next_band):
-                self._record_nonfinite_recovery("Unstable filter state reset while rendering")
-                integrator_low = 0.0
-                integrator_band = 0.0
-                output[index] = 0.0
-                continue
-            integrator_low = next_low
-            integrator_band = next_band
-            if preset.filter_type == "lowpass":
-                output[index] = low
-            elif preset.filter_type == "highpass":
+        if not np.isfinite(signal).all():
+            self._record_nonfinite_recovery("Non-finite oscillator sample rejected")
+            signal = np.nan_to_num(signal, nan=0.0, posinf=0.0, neginf=0.0)
+
+        filter_type = preset.filter_type
+        for index in range(len(signal)):
+            sample = float(signal[index])
+            coefficient = float(coefficient_values[index])
+            integrator_low += coefficient * integrator_band
+            high = sample - integrator_low - damping * integrator_band
+            integrator_band += coefficient * high
+            if filter_type == "lowpass":
+                output[index] = integrator_low
+            elif filter_type == "highpass":
                 output[index] = high
-            elif preset.filter_type == "bandpass":
-                output[index] = band
+            elif filter_type == "bandpass":
+                output[index] = integrator_band
             else:
-                output[index] = low + high
+                output[index] = integrator_low + high
+        if not self._filter_state_is_valid(
+            integrator_low,
+            integrator_band,
+        ) or not np.isfinite(output).all():
+            self._record_nonfinite_recovery("Unstable filter block rejected after rendering")
+            integrator_low = 0.0
+            integrator_band = 0.0
+            output.fill(0.0)
         voice.filter_low = integrator_low
         voice.filter_band = integrator_band
         return output

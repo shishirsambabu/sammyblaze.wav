@@ -7,8 +7,26 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from handmusic.music import builtin_synth
 from handmusic.music.builtin_synth import BuiltinSynthOutput, SynthEngine
 from handmusic.music.presets import PRESETS, Preset, get_preset
+
+
+@pytest.mark.parametrize("resonance", (0.0, 0.25, 0.5, 0.75, 1.0))
+def test_python_chamberlin_ceiling_matches_native_stability_contract(
+    resonance: float,
+) -> None:
+    damping = builtin_synth._filter_damping(resonance)
+    analytical_limit = builtin_synth._maximum_stable_filter_coefficient(damping)
+    expected_ceiling = min(0.95, analytical_limit)
+    coefficients = builtin_synth._state_variable_filter_coefficients(
+        np.array([25.0, 1000.0, 20_000.0]),
+        resonance,
+        48_000.0,
+    )
+
+    assert np.all(coefficients <= expected_ceiling)
+    assert expected_ceiling * expected_ceiling + 2.0 * damping * expected_ceiling < 4.0
 
 
 @pytest.mark.parametrize(
