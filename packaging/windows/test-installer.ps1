@@ -346,6 +346,34 @@ try {
             "/LOG=$uninstallLog"
         ) `
         -Description "Silent uninstall"
+    $cleanupDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $remainingAppFiles = if (Test-Path -LiteralPath $appRoot) {
+            @(
+                Get-ChildItem `
+                    -LiteralPath $appRoot `
+                    -Recurse `
+                    -File `
+                    -ErrorAction SilentlyContinue
+            )
+        }
+        else {
+            @()
+        }
+        $managedVstStillExists = Test-Path -LiteralPath (
+            Join-Path $vst3Root "SammyBlaze.vst3"
+        )
+        $arpStillExists = @(Get-SammyBlazeArpEntries).Count -ne 0
+        if (
+            $remainingAppFiles.Count -eq 0 -and
+            -not $managedVstStillExists -and
+            -not $arpStillExists
+        ) {
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $cleanupDeadline)
+
     if (Test-Path -LiteralPath $appRoot) {
         $remainingAppFiles = @(
             Get-ChildItem -LiteralPath $appRoot -Recurse -File -ErrorAction SilentlyContinue
