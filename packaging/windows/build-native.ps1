@@ -182,7 +182,7 @@ Invoke-NativeCommand `
 
 if ($DryRun) {
     if ($Validate) {
-        Write-Host "DRY RUN: build and execute SammyBlazeDspValidation and Steinberg validator."
+        Write-Host "DRY RUN: build and execute shared-core, C ABI, DSP, benchmark, and Steinberg validation."
     }
     return
 }
@@ -203,23 +203,48 @@ if ($Validate) {
         -Arguments @(
             "--build", $resolvedBuildDirectory,
             "--config", $Configuration,
-            "--target", "SammyBlazeDspValidation"
+            "--target",
+            "SammyBlazeAudioCoreValidation",
+            "SammyBlazeAudioCoreAbiValidation"
         ) `
-        -FailureMessage "Native DSP validation build failed."
+        -FailureMessage "Shared audio-core validation build failed."
 
-    $dspValidatorCandidates = @(
-        (Join-Path $resolvedBuildDirectory "native\plugin\$Configuration\SammyBlazeDspValidation.exe"),
-        (Join-Path $resolvedBuildDirectory "bin\$Configuration\SammyBlazeDspValidation.exe")
-    )
-    $dspValidator = $dspValidatorCandidates |
-        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
-        Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($dspValidator)) {
-        throw "Native DSP validator executable is missing. Checked: $($dspValidatorCandidates -join ', ')"
+    $audioCoreValidationDirectory = Join-Path `
+        $resolvedBuildDirectory `
+        "native\audio_core\$Configuration"
+    $audioCoreValidator = Join-Path `
+        $audioCoreValidationDirectory `
+        "SammyBlazeAudioCoreValidation.exe"
+    $audioCoreAbiValidator = Join-Path `
+        $audioCoreValidationDirectory `
+        "SammyBlazeAudioCoreAbiValidation.exe"
+    $env:PATH = "$(Split-Path -Parent $resolvedAudioCoreDllPath);$env:PATH"
+    foreach ($validationExecutable in @(
+        $audioCoreValidator,
+        $audioCoreAbiValidator
+    )) {
+        if (-not (Test-Path -LiteralPath $validationExecutable -PathType Leaf)) {
+            throw "Shared audio-core validator is missing: $validationExecutable"
+        }
+        & $validationExecutable
+        if ($LASTEXITCODE -ne 0) {
+            throw "Shared audio-core validation failed with exit code $LASTEXITCODE."
+        }
     }
-    & $dspValidator
+
+    $abiRuntimeValidation = Join-Path `
+        $repoRoot `
+        "native\audio_core\tests\run_abi_validation.ps1"
+    if (-not (Test-Path -LiteralPath $abiRuntimeValidation -PathType Leaf)) {
+        throw "C ABI runtime validation script is missing: $abiRuntimeValidation"
+    }
+    & powershell.exe `
+        -NoProfile `
+        -ExecutionPolicy Bypass `
+        -File $abiRuntimeValidation `
+        -DllPath $resolvedAudioCoreDllPath
     if ($LASTEXITCODE -ne 0) {
-        throw "Native DSP validation failed with exit code $LASTEXITCODE."
+        throw "C ABI runtime validation failed with exit code $LASTEXITCODE."
     }
 
     Invoke-NativeCommand `

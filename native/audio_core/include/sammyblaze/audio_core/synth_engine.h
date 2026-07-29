@@ -86,10 +86,14 @@ private:
         float releaseStep {0.0f};
         float filterLow {0.0f};
         float filterBand {0.0f};
+        float filterDamping {1.95f};
+        float filterCoefficientLimit {0.95f};
+        float unisonGain {1.0f};
         std::uint32_t noiseState {1};
         std::uint64_t age {0};
         SynthPreset preset {};
         EnvelopeStage stage {EnvelopeStage::off};
+        std::uint8_t effectiveUnisonVoices {1};
         bool keyDown {false};
         bool active {false};
     };

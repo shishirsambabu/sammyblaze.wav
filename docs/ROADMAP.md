@@ -82,7 +82,14 @@ multi-rate DSP validation, visible standalone callback/xrun diagnostics, truthfu
 state, and bounded UI-to-runtime command marshalling. Physical acceptance passed five CLI camera
 open/track/close cycles and three desktop-worker start/stop cycles on the development machine.
 
-Remaining Phase 9 work: move the standalone product onto a shared native real-time audio core,
-meet the polyphony budget with at least 2x headroom, add steady-state camera-read failure recovery,
-make VST MIDI and automation sample-accurate, and complete repeated clean-machine hardware/DAW
-soak tests.
+Phase 9.2 delivers one allocation-free C++ `SynthEngine` shared by the standalone application and
+VST3, a versioned local C ABI, a bounded SoundDevice adapter, explicit development fallback
+visibility, deterministic Windows release staging, and SHA-256 manifests. The native gate renders
+all 120 factory programs at five sample rates, verifies zero steady-state render allocations,
+passes the full 47-test Steinberg VST3 suite, and repeatedly meets the 24-voice 256-frame p95
+target of 2.67 ms with more than 2x audio-deadline headroom on the development machine.
+
+Remaining Phase 9 work: add steady-state camera-read failure recovery, make VST MIDI and
+automation sample-accurate, prove actual SoundDevice callback/xrun performance in long hardware
+soaks, sign Windows binaries, and complete repeated clean-machine hardware/DAW compatibility
+tests.

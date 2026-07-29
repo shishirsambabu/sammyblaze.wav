@@ -269,6 +269,15 @@ std::uint32_t SynthEngine::maximumBlockSize () const noexcept
 void SynthEngine::updateVoiceTuning (Voice& voice) noexcept
 {
     const auto unisonCount = std::clamp<int> (voice.preset.unisonVoices, 1, 3);
+    voice.effectiveUnisonVoices =
+        static_cast<std::uint8_t> (unisonCount);
+    voice.unisonGain =
+        1.0f / std::sqrt (static_cast<float> (unisonCount));
+    voice.filterDamping =
+        filterDamping (voice.preset.filterResonance);
+    voice.filterCoefficientLimit = std::min (
+        kLegacyFilterCoefficientLimit,
+        maximumStableFilterCoefficient (voice.filterDamping));
     const auto baseFrequency =
         440.0 * std::exp2 ((static_cast<double> (voice.pitch) - 69.0) / 12.0);
     for (int unison = 0; unison < unisonCount; ++unison)
@@ -588,7 +597,8 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
             return 0.0f;
     }
 
-    const auto unisonCount = std::clamp<int> (preset.unisonVoices, 1, 3);
+    const auto unisonCount =
+        static_cast<int> (voice.effectiveUnisonVoices);
     float oscillators = 0.0f;
     for (int unison = 0; unison < unisonCount; ++unison)
     {
@@ -611,8 +621,8 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
         oscillators += a * (1.0f - preset.waveformMix) +
                        b * preset.waveformMix;
     }
-    oscillators /= std::sqrt (static_cast<float> (unisonCount));
-    oscillators *= voice.velocity * voice.envelope;
+    oscillators *=
+        voice.unisonGain * voice.velocity * voice.envelope;
 
     const auto cutoffOctaves =
         preset.filterEnvelope * voice.envelope * 4.0f +
@@ -623,17 +633,42 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
         static_cast<float> (sampleRate_) *
             kMaximumFilterNyquistRatio);
     bool recovered = false;
-    const auto filter = processStateVariableFilter (
-        oscillators,
-        cutoff,
-        preset.filterResonance,
-        sampleRate_,
-        voice.filterLow,
-        voice.filterBand,
-        &recovered);
+    if (!std::isfinite (voice.filterLow) ||
+        !std::isfinite (voice.filterBand))
+    {
+        voice.filterLow = 0.0f;
+        voice.filterBand = 0.0f;
+        recovered = true;
+    }
+    const auto safeInput = std::isfinite (oscillators) ? oscillators : 0.0f;
+    recovered = recovered || !std::isfinite (oscillators);
+    const auto coefficient = std::clamp (
+        2.0f * sineFromPhase (
+                   static_cast<double> (cutoff) /
+                   (2.0 * sampleRate_)),
+        kMinimumFilterCoefficient,
+        voice.filterCoefficientLimit);
+    voice.filterLow += coefficient * voice.filterBand;
+    const auto high =
+        safeInput - voice.filterLow -
+        voice.filterDamping * voice.filterBand;
+    voice.filterBand += coefficient * high;
+    if (!std::isfinite (voice.filterLow) ||
+        !std::isfinite (voice.filterBand) || !std::isfinite (high))
+    {
+        voice.filterLow = 0.0f;
+        voice.filterBand = 0.0f;
+        recordRecovery ();
+        return 0.0f;
+    }
     if (recovered)
         recordRecovery ();
-    return selectFilterOutput (filter, preset.filterType);
+    return selectFilterOutput (
+        {voice.filterLow,
+         high,
+         voice.filterBand,
+         voice.filterLow + high},
+        preset.filterType);
 }
 
 void SynthEngine::renderSample (
