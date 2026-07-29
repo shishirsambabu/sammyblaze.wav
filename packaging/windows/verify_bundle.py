@@ -68,22 +68,15 @@ def _walk_toc(value: object) -> Iterable[tuple[object, ...]]:
 
 def modules_from_analysis_toc(path: Path) -> set[str]:
     value = ast.literal_eval(path.read_text(encoding="utf-8"))
-    module_types = {"PYMODULE", "EXTENSION"}
-    modules = {
-        item[0]
-        for item in _walk_toc(value)
-        if len(item) >= 3
-        and isinstance(item[0], str)
-        and item[2] in module_types
-    }
-    modules.update(
-        item[0][:-4].replace("\\", ".").replace("/", ".")
-        for item in _walk_toc(value)
-        if len(item) >= 3
-        and isinstance(item[0], str)
-        and item[0].lower().endswith(".pyd")
-        and item[2] == "BINARY"
-    )
+    modules: set[str] = set()
+    for item in _walk_toc(value):
+        if len(item) < 3 or not isinstance(item[0], str):
+            continue
+        name, _source, entry_type = item[:3]
+        if entry_type == "PYMODULE":
+            modules.add(name)
+        elif entry_type in {"BINARY", "EXTENSION"} and name.lower().endswith(".pyd"):
+            modules.add(name[:-4].replace("\\", ".").replace("/", "."))
     return modules
 
 

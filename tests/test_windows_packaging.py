@@ -45,8 +45,10 @@ def test_bundle_verifier_accepts_minimal_required_payload(tmp_path: Path) -> Non
     assert file_count > 10
 
 
+@pytest.mark.parametrize("entry_type", ("BINARY", "EXTENSION"))
 def test_analysis_toc_maps_pyside_binary_extensions_to_modules(
     tmp_path: Path,
+    entry_type: str,
 ) -> None:
     toc = tmp_path / "Analysis-00.toc"
     toc.write_text(
@@ -57,7 +59,7 @@ def test_analysis_toc_maps_pyside_binary_extensions_to_modules(
                     (
                         "PySide6\\QtWidgets.pyd",
                         "PySide6\\QtWidgets.pyd",
-                        "BINARY",
+                        entry_type,
                     )
                 ],
             )
