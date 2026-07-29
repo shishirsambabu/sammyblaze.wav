@@ -1,46 +1,119 @@
-# Windows performer bundle
+# Windows release packaging
 
-The supported packaging path creates a Windows onedir bundle for the desktop performer UI.
-It keeps the hand-landmarker model beside the executable and includes the optional runtime
-dependencies required for camera tracking, Qt, and native MIDI.
+The Phase 9.2 Windows pipeline produces two distinct deliverables:
 
-From the repository root:
+- a PyInstaller `standalone/SammyBlaze/` bundle containing
+  `SammyBlazeAudioCore.dll`, the MediaPipe hand model, and the Python/Qt runtime;
+- a separately installable `VST3/SammyBlaze.vst3` bundle.
+
+It does **not** create the final installer. `stage-release.ps1` assembles the deterministic input
+tree, manifest, and checksums that a future signed installer will consume.
+
+## One-command build and stage
+
+Once the native `SammyBlazeAudioCore` CMake target exists:
 
 ```powershell
-python packaging/windows/build.ps1
+powershell -ExecutionPolicy Bypass -File packaging/windows/build-release.ps1 `
+  -ProductVersion 0.4.0 `
+  -ValidateNative
 ```
 
-With the D: performer environment used for native MIDI:
+Defaults use the existing D:-drive workstation:
+
+```text
+Python:        D:\Python312\python.exe
+VST3 SDK:     D:\SammyBlazeDeps\vst3sdk
+Build root:   D:\SammyBlazeBuild\native
+Audio DLL:    D:\SammyBlazeBuild\native\bin\Release\SammyBlazeAudioCore.dll
+VST3 bundle:  D:\SammyBlazeBuild\native\VST3\Release\SammyBlaze.vst3
+```
+
+Every tool, build, artifact, output, and staging path can be overridden. For example:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1 -Python D:\Python312\python.exe
+powershell -ExecutionPolicy Bypass -File packaging/windows/build-release.ps1 `
+  -ProductVersion 0.4.0 `
+  -Python D:\Python312\python.exe `
+  -Vst3SdkRoot D:\deps\vst3sdk `
+  -NativeBuildDirectory D:\build\sammyblaze-native `
+  -AudioCoreDllPath D:\build\sammyblaze-native\bin\Release\SammyBlazeAudioCore.dll `
+  -Vst3BundlePath D:\build\sammyblaze-native\VST3\Release\SammyBlaze.vst3 `
+  -StandaloneOutputRoot D:\build\sammyblaze-standalone `
+  -StageRoot D:\releases\SammyBlaze-0.4.0 `
+  -ValidateNative
 ```
 
-The script expects `models/hand_landmarker.task` to exist and writes the bundle to
-`artifacts/windows/SammyBlaze/`. Use `-SkipInstall` when the current interpreter already has
-the `[package,vision,midi-native,ui]` extras installed.
+Inspect the resolved native target and path contract without building:
 
-This is an unsigned development bundle. Production distribution still needs a code-signing
-certificate, installer wrapper, and a release artifact review before publishing.
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build-release.ps1 `
+  -ProductVersion 0.4.0 `
+  -DryRun
+```
 
-## Native VST3
+Dry-run mode is a plan only because the audio-core target may not yet exist. Real build and
+staging runs fail immediately when required tools, the model, DLL, VST3 bundle, or VST3 binary
+are missing.
 
-The native instrument uses Visual Studio Build Tools, Ninja Multi-Config, and the Steinberg VST3
-SDK. On the D:-based workstation:
+## Individual steps
+
+Build the native audio-core DLL and VST3:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/windows/build-native.ps1 -Validate
 ```
 
-The script imports the x64 compiler environment, builds outside the repository at
-`D:\SammyBlazeBuild\native`, and optionally runs both the validator self-test and full plug-in
-suite. The valid bundle is:
+If CMake uses a different target or output path:
 
-```text
-D:\SammyBlazeBuild\native\VST3\Release\SammyBlaze.vst3
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build-native.ps1 `
+  -AudioCoreTarget SammyBlazeAudioCore `
+  -AudioCoreDllPath D:\custom-build\Release\SammyBlazeAudioCore.dll `
+  -Vst3Target SammyBlazeVST3 `
+  -Vst3BundlePath D:\custom-build\VST3\Release\SammyBlaze.vst3
 ```
 
-Copy the complete directory to `C:\Program Files\Common Files\VST3\`, or install it under
-`D:\VST3\` and add that folder to FL Studio's plug-in search paths. Rescan, then run
-`D:\Python312\python.exe -m handmusic --ui`, choose `FL Studio / VST3 bridge`, and start the
-performer. The bridge is loopback-only on UDP port `18736`.
+Build only the standalone bundle from an existing DLL:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1 `
+  -Python D:\Python312\python.exe `
+  -AudioCoreDllPath D:\SammyBlazeBuild\native\bin\Release\SammyBlazeAudioCore.dll
+```
+
+Stage already-built artifacts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/stage-release.ps1 `
+  -ProductVersion 0.4.0 `
+  -StandaloneBundlePath artifacts\windows\SammyBlaze `
+  -Vst3BundlePath D:\SammyBlazeBuild\native\VST3\Release\SammyBlaze.vst3 `
+  -StageRoot D:\SammyBlazeRelease\0.4.0
+```
+
+The staging tree is:
+
+```text
+SammyBlazeRelease\0.4.0\
+├── standalone\
+│   └── SammyBlaze\
+│       ├── SammyBlaze.exe
+│       └── _internal\
+│           ├── SammyBlazeAudioCore.dll
+│           └── models\hand_landmarker.task
+├── VST3\
+│   └── SammyBlaze.vst3\
+├── manifest.json
+└── SHA256SUMS.txt
+```
+
+`manifest.json` contains no wall-clock timestamp. Files are sorted and checksummed by relative
+path, so staging the same source bytes, version, and Git revision produces identical metadata.
+The script validates all source artifacts before replacing an existing stage.
+
+## Current distribution status
+
+These remain unsigned development artifacts. Commercial distribution still requires an
+installer authoring tool, code-signing certificate, upgrade/uninstall rules, clean-machine
+testing, antivirus reputation checks, and release approval.
