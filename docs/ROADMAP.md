@@ -95,12 +95,16 @@ headless packaged hardware-smoke path, and an absolute release-footprint gate. I
 v1 compatibility: Phase 9.2 audio-core DLLs still load, while newer cores expose requested and
 effective unison quality.
 
-Phase 9.4 is in progress. It adds actual SoundDevice callback timing/xrun evidence, repeated
-real-camera diagnostic close/reopen soaks, performer-visible camera recovery lifecycle state,
-and an evidence-based DAW host acceptance matrix. The development-machine audit found no FL
-Studio installation, so FL-specific scan, playback, automation, state recall, and multi-instance
-claims remain blocked until the host is installed.
+Phase 9.4 automated development acceptance is delivered. It adds actual SoundDevice callback
+timing/xrun evidence, repeated real-camera diagnostic close/reopen soaks, performer-visible
+camera recovery lifecycle state, and an evidence-based DAW host acceptance matrix. The
+60-second WASAPI gate passed with zero callback errors or deadline misses, the 60-second
+DirectShow gate passed all ten recoveries at more than 25 FPS, 491 Python tests passed, the
+native benchmark retained more than 2x deadline headroom, the staged VST3 passed 47/47
+Steinberg tests, and all 296 staged checksums verified. The development-machine audit found no
+FL Studio installation, so FL-specific scan, playback, automation, state recall, and
+multi-instance claims remain blocked until the host is installed.
 
-Remaining Phase 9 work: prove actual SoundDevice callback/xrun performance in long hardware
-soaks, physically test camera disconnect/reconnect exhaustion, sign Windows binaries, and complete
-repeated clean-machine hardware and FL Studio compatibility tests.
+Remaining Phase 9 work: run the 30-minute 128/256-frame audio matrix, physically test camera
+disconnect/reconnect exhaustion, sign Windows binaries, and complete repeated clean-machine
+hardware and FL Studio compatibility tests.
