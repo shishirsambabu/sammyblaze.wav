@@ -7,6 +7,7 @@ set(sammyblaze_plugin_sources
     source/ids.h
     source/processor.cpp
     source/processor.h
+    source/sample_timeline.h
     source/version.h
 )
 
@@ -48,5 +49,37 @@ if(BUILD_TESTING)
     add_test(
         NAME SammyBlazeDspValidation
         COMMAND SammyBlazeDspValidation
+    )
+
+    add_executable(SammyBlazeSampleTimelineValidation
+        tests/sample_timeline_validation.cpp
+        source/sample_timeline.h
+    )
+    target_link_libraries(
+        SammyBlazeSampleTimelineValidation
+        PRIVATE
+            SammyBlazeAudioCoreEngine
+    )
+    target_include_directories(
+        SammyBlazeSampleTimelineValidation
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/source"
+    )
+    target_compile_features(
+        SammyBlazeSampleTimelineValidation
+        PRIVATE
+            cxx_std_20
+    )
+    if(MSVC)
+        target_compile_options(
+            SammyBlazeSampleTimelineValidation
+            PRIVATE
+                /W4
+                /permissive-
+        )
+    endif()
+    add_test(
+        NAME SammyBlazeSampleTimelineValidation
+        COMMAND SammyBlazeSampleTimelineValidation
     )
 endif()

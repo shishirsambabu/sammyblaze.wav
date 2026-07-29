@@ -78,7 +78,10 @@ bool validateNullAndRangeContracts ()
         sbw_audio_core_panic (nullptr) !=
             SBW_AUDIO_CORE_INVALID_ARGUMENT ||
         sbw_audio_core_active_voice_count (nullptr) != 0 ||
-        sbw_audio_core_nonfinite_recovery_count (nullptr) != 0)
+        sbw_audio_core_nonfinite_recovery_count (nullptr) != 0 ||
+        sbw_audio_core_requested_unison_voices (nullptr) != 0 ||
+        sbw_audio_core_rendered_unison_lanes_per_voice (nullptr) != 0 ||
+        sbw_audio_core_unison_quality_limited (nullptr) != 0)
         return false;
 
     auto* core = sbw_audio_core_create (48000.0, 256);
@@ -178,18 +181,63 @@ bool validatePerformanceControls ()
     return true;
 }
 
+bool validateUnisonDiagnostics ()
+{
+    std::array<float, 512> output {};
+    auto* core = sbw_audio_core_create (48000.0, 256);
+    if (!core)
+        return false;
+    auto patch = validPatch ();
+    patch.unison_voices = 16;
+    if (sbw_audio_core_apply_patch (core, &patch) != SBW_AUDIO_CORE_OK ||
+        sbw_audio_core_note_on (core, 48, 0.8f) != SBW_AUDIO_CORE_OK ||
+        sbw_audio_core_render_interleaved (
+            core,
+            output.data (),
+            256) != SBW_AUDIO_CORE_OK ||
+        sbw_audio_core_requested_unison_voices (core) != 16 ||
+        sbw_audio_core_rendered_unison_lanes_per_voice (core) != 16 ||
+        sbw_audio_core_unison_quality_limited (core) != 0)
+    {
+        sbw_audio_core_destroy (core);
+        return false;
+    }
+    for (std::uint32_t note = 49; note < 72; ++note)
+    {
+        if (sbw_audio_core_note_on (core, note, 0.8f) !=
+            SBW_AUDIO_CORE_OK)
+        {
+            sbw_audio_core_destroy (core);
+            return false;
+        }
+    }
+    const auto valid =
+        sbw_audio_core_render_interleaved (
+            core,
+            output.data (),
+            256) == SBW_AUDIO_CORE_OK &&
+        finiteOutput (output) &&
+        sbw_audio_core_active_voice_count (core) == 24 &&
+        sbw_audio_core_requested_unison_voices (core) == 16 &&
+        sbw_audio_core_rendered_unison_lanes_per_voice (core) == 4 &&
+        sbw_audio_core_unison_quality_limited (core) == 1;
+    sbw_audio_core_destroy (core);
+    return valid;
+}
+
 } // namespace
 
 int main ()
 {
     if (!validateNullAndRangeContracts () ||
         !validatePatchContract () ||
-        !validatePerformanceControls ())
+        !validatePerformanceControls () ||
+        !validateUnisonDiagnostics ())
     {
         std::cerr << "C ABI v1 validation failed\n";
         return 1;
     }
-    std::cout << "PASS: C ABI v1 layout, validation, patch, note, "
-                 "sustain, render and panic\n";
+    std::cout << "PASS: C ABI v1 layout, optional unison diagnostics, "
+                 "patch, note, sustain, render and panic\n";
     return 0;
 }

@@ -34,8 +34,7 @@ public:
 
 private:
     void handleBridge ();
-    void handleEvents (IEventList* input, IEventList* output);
-    void updateParameters (IParameterChanges* changes);
+    void applyParameter (ParamID parameter, ParamValue value) noexcept;
 
     GestureBridgeReceiver bridge;
     ::SammyBlaze::AudioCore::SynthEngine engine;

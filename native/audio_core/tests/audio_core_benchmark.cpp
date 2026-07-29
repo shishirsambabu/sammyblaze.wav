@@ -79,12 +79,22 @@ int main (int argc, char** argv)
     const auto maximum = durations.back ();
     const auto audioDeadlineMs =
         static_cast<double> (blockSize) / sampleRate * 1000.0;
+    const auto requestedUnison = engine.requestedUnisonVoices ();
+    const auto renderedUnison =
+        engine.renderedUnisonLanesPerVoice ();
+    const auto qualityLimited = engine.unisonQualityLimited ();
 
     std::cout << std::fixed << std::setprecision (4)
               << "SammyBlaze shared SynthEngine benchmark\n"
               << "Voices: " << engine.activeVoiceCount ()
               << ", frames: " << blockSize
               << ", sample rate: " << sampleRate << " Hz\n"
+              << "Unison requested: "
+              << static_cast<int> (requestedUnison)
+              << ", effective lanes/voice: "
+              << static_cast<int> (renderedUnison)
+              << ", quality limited: "
+              << (qualityLimited ? "yes" : "no") << '\n'
               << "Mean: " << mean << " ms"
               << ", p50: " << p50 << " ms"
               << ", p95: " << p95 << " ms"
@@ -97,5 +107,11 @@ int main (int argc, char** argv)
               << ": 24-voice p95 "
               << (p95 <= targetP95Ms ? "meets" : "misses")
               << " the Phase 9.2 target\n";
-    return enforce && p95 > targetP95Ms ? 1 : 0;
+    const auto truthfulBudget =
+        requestedUnison == 16 && renderedUnison == 4 &&
+        qualityLimited;
+    if (!truthfulBudget)
+        std::cerr << "FAIL: expected observable 16-requested/4-effective "
+                     "quality budget\n";
+    return !truthfulBudget || (enforce && p95 > targetP95Ms) ? 1 : 0;
 }

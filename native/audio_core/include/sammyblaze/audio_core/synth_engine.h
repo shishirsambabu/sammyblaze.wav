@@ -11,6 +11,11 @@
 namespace SammyBlaze::AudioCore {
 
 inline constexpr std::size_t kMaximumVoices = 24;
+inline constexpr std::size_t kMaximumUnisonVoices = 16;
+// At high polyphony the renderer uses an observable, stable, evenly spaced
+// subset of the requested detuned lanes. This keeps the callback deterministic
+// without the discontinuities caused by swapping oscillator subsets per sample.
+inline constexpr std::size_t kUnisonOscillatorBudgetPerSample = 96;
 
 class SynthEngine final
 {
@@ -55,6 +60,10 @@ public:
     void panic () noexcept;
     std::uint32_t activeVoiceCount () const noexcept;
     std::uint64_t nonfiniteRecoveryCount () const noexcept;
+    std::uint8_t requestedUnisonVoices () const noexcept;
+    std::uint8_t renderedUnisonLanesPerVoice () const noexcept;
+    bool unisonQualityLimited () const noexcept;
+    std::uint64_t oscillatorWorkCount () const noexcept;
 
     const SynthPreset& currentPreset () const noexcept;
     float masterGain () const noexcept;
@@ -78,9 +87,9 @@ private:
     struct Voice
     {
         std::int16_t pitch {-1};
-        std::array<double, 3> phaseA {};
-        std::array<double, 3> phaseB {};
-        std::array<double, 3> frequency {};
+        std::array<double, kMaximumUnisonVoices> phaseA {};
+        std::array<double, kMaximumUnisonVoices> phaseB {};
+        std::array<double, kMaximumUnisonVoices> frequency {};
         float velocity {0.0f};
         float envelope {0.0f};
         float releaseStep {0.0f};
@@ -88,12 +97,11 @@ private:
         float filterBand {0.0f};
         float filterDamping {1.95f};
         float filterCoefficientLimit {0.95f};
-        float unisonGain {1.0f};
         std::uint32_t noiseState {1};
         std::uint64_t age {0};
         SynthPreset preset {};
         EnvelopeStage stage {EnvelopeStage::off};
-        std::uint8_t effectiveUnisonVoices {1};
+        std::uint8_t requestedUnisonVoices {1};
         bool keyDown {false};
         bool active {false};
     };
@@ -122,6 +130,7 @@ private:
     std::size_t effectWriteIndex_ {0};
     std::uint32_t maximumBlockSize_ {0};
     std::uint64_t voiceAge_ {0};
+    std::uint64_t oscillatorWorkCount_ {0};
     std::atomic<std::uint64_t> nonfiniteRecoveryCount_ {0};
     double sampleRate_ {0.0};
     double lfoPhase_ {0.0};
@@ -139,6 +148,8 @@ private:
     float smoothedDelayMix_ {0.05f};
     float smoothedChorusMix_ {0.20f};
     float smoothingCoefficient_ {0.0f};
+    std::uint8_t renderedUnisonLanesPerVoice_ {1};
+    bool unisonQualityLimited_ {false};
     bool sustainEnabled_ {false};
 };
 

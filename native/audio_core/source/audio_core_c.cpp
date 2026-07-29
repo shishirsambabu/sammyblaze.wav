@@ -285,4 +285,43 @@ uint64_t sbw_audio_core_nonfinite_recovery_count (
     }
 }
 
+uint32_t sbw_audio_core_requested_unison_voices (
+    const sbw_audio_core* core)
+{
+    try
+    {
+        return core ? core->engine.requestedUnisonVoices () : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+
+uint32_t sbw_audio_core_rendered_unison_lanes_per_voice (
+    const sbw_audio_core* core)
+{
+    try
+    {
+        return core ? core->engine.renderedUnisonLanesPerVoice () : 0;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+
+uint32_t sbw_audio_core_unison_quality_limited (
+    const sbw_audio_core* core)
+{
+    try
+    {
+        return core && core->engine.unisonQualityLimited () ? 1U : 0U;
+    }
+    catch (...)
+    {
+        return 0;
+    }
+}
+
 } // extern "C"

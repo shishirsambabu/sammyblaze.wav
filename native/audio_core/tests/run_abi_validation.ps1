@@ -86,6 +86,14 @@ dll.sbw_audio_core_active_voice_count.argtypes = [ctypes.c_void_p]
 dll.sbw_audio_core_active_voice_count.restype = ctypes.c_uint32
 dll.sbw_audio_core_nonfinite_recovery_count.argtypes = [ctypes.c_void_p]
 dll.sbw_audio_core_nonfinite_recovery_count.restype = ctypes.c_uint64
+dll.sbw_audio_core_requested_unison_voices.argtypes = [ctypes.c_void_p]
+dll.sbw_audio_core_requested_unison_voices.restype = ctypes.c_uint32
+dll.sbw_audio_core_rendered_unison_lanes_per_voice.argtypes = [
+    ctypes.c_void_p
+]
+dll.sbw_audio_core_rendered_unison_lanes_per_voice.restype = ctypes.c_uint32
+dll.sbw_audio_core_unison_quality_limited.argtypes = [ctypes.c_void_p]
+dll.sbw_audio_core_unison_quality_limited.restype = ctypes.c_uint32
 
 
 def heavy_patch():
@@ -146,9 +154,15 @@ for _ in range(32):
     assert bytes(left_output) == bytes(right_output)
 assert dll.sbw_audio_core_active_voice_count(left_core) == 24
 assert dll.sbw_audio_core_nonfinite_recovery_count(left_core) == 0
+assert dll.sbw_audio_core_requested_unison_voices(left_core) == 16
+assert dll.sbw_audio_core_rendered_unison_lanes_per_voice(left_core) == 4
+assert dll.sbw_audio_core_unison_quality_limited(left_core) == 1
 dll.sbw_audio_core_destroy(left_core)
 dll.sbw_audio_core_destroy(right_core)
-print("PASS: C ABI deterministic parity across twin 24-voice engines")
+print(
+    "PASS: C ABI deterministic parity; unison requested=16 "
+    "effective=4 quality_limited=1 at 24 voices"
+)
 
 render_count = 0
 for sample_rate in (32000.0, 44100.0, 48000.0, 96000.0, 192000.0):

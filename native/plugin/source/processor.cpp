@@ -4,14 +4,34 @@
 #include "ids.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
+#include "sample_timeline.h"
 #include "sammyblaze/audio_core/presets.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 
 namespace Steinberg::Vst::SammyBlaze {
 namespace Core = ::SammyBlaze::AudioCore;
+namespace {
+
+constexpr std::size_t parameterCount =
+    static_cast<std::size_t> (kDelayTimeId - kMasterGainId + 1);
+static_assert (parameterCount == 24);
+
+struct ParameterCursor
+{
+    IParamValueQueue* queue {nullptr};
+    ParamID parameter {0};
+    int32 nextPoint {0};
+    int32 pointCount {0};
+    int32 sampleOffset {0};
+    ParamValue value {0.0};
+    bool pending {false};
+};
+
+} // namespace
 
 Processor::Processor ()
 {
@@ -76,24 +96,163 @@ tresult PLUGIN_API Processor::setProcessing (TBool state)
 
 tresult PLUGIN_API Processor::process (ProcessData& data)
 {
-    updateParameters (data.inputParameterChanges);
     handleBridge ();
-    handleEvents (data.inputEvents, data.outputEvents);
-    if (data.numOutputs == 0 || data.numSamples <= 0)
-        return kResultOk;
+    const auto sampleCount = std::max<int32> (data.numSamples, 0);
 
-    auto** output = data.outputs[0].channelBuffers32;
-    if (!output || !output[0] || !output[1])
-        return kResultOk;
+    std::array<ParameterCursor, parameterCount> parameters {};
+    auto loadParameterPoint =
+        [&] (ParameterCursor& cursor, int32 floorOffset) {
+            cursor.pending = false;
+            while (cursor.nextPoint < cursor.pointCount)
+            {
+                int32 sampleOffset = 0;
+                ParamValue value = 0.0;
+                const auto point = cursor.nextPoint++;
+                if (cursor.queue->getPoint (
+                        point,
+                        sampleOffset,
+                        value) != kResultOk)
+                    continue;
+                cursor.sampleOffset =
+                    std::clamp (sampleOffset, floorOffset, sampleCount);
+                cursor.value = value;
+                cursor.pending = true;
+                return;
+            }
+        };
 
-    if (!engine.renderPlanar (
-            output[0],
-            output[1],
-            static_cast<std::uint32_t> (data.numSamples)))
+    if (data.inputParameterChanges)
     {
-        std::fill_n (output[0], data.numSamples, 0.0f);
-        std::fill_n (output[1], data.numSamples, 0.0f);
+        const auto hostParameterCount =
+            data.inputParameterChanges->getParameterCount ();
+        for (int32 index = 0; index < hostParameterCount; ++index)
+        {
+            auto* queue =
+                data.inputParameterChanges->getParameterData (index);
+            if (!queue)
+                continue;
+            const auto parameter = queue->getParameterId ();
+            if (parameter < kMasterGainId || parameter > kDelayTimeId)
+                continue;
+            auto& cursor = parameters[static_cast<std::size_t> (
+                parameter - kMasterGainId)];
+            if (cursor.queue)
+                continue;
+            cursor.queue = queue;
+            cursor.parameter = parameter;
+            cursor.pointCount = queue->getPointCount ();
+            loadParameterPoint (cursor, 0);
+        }
     }
+
+    Event currentEvent {};
+    int32 nextEvent = 0;
+    const auto eventCount =
+        data.inputEvents ? data.inputEvents->getEventCount () : 0;
+    bool eventPending = false;
+    auto loadEvent = [&] (int32 floorOffset) {
+        eventPending = false;
+        while (nextEvent < eventCount)
+        {
+            if (data.inputEvents->getEvent (
+                    nextEvent++,
+                    currentEvent) != kResultOk)
+                continue;
+            currentEvent.sampleOffset = std::clamp (
+                currentEvent.sampleOffset,
+                floorOffset,
+                sampleCount);
+            eventPending = true;
+            return;
+        }
+    };
+    loadEvent (0);
+
+    float* leftOutput = nullptr;
+    float* rightOutput = nullptr;
+    if (data.numOutputs > 0 && data.outputs &&
+        data.outputs[0].channelBuffers32)
+    {
+        leftOutput = data.outputs[0].channelBuffers32[0];
+        rightOutput = data.outputs[0].channelBuffers32[1];
+    }
+
+    auto peek = [&] (int32, int32) {
+        SampleTimeline::NextAction next {};
+        if (eventPending)
+        {
+            next.sampleOffset = currentEvent.sampleOffset;
+            next.pending = true;
+        }
+        for (const auto& cursor : parameters)
+        {
+            if (!cursor.pending)
+                continue;
+            if (!next.pending || cursor.sampleOffset < next.sampleOffset)
+            {
+                next.sampleOffset = cursor.sampleOffset;
+                next.pending = true;
+            }
+        }
+        return next;
+    };
+
+    auto applyAt = [&] (int32 sampleOffset) {
+        for (auto& cursor : parameters)
+        {
+            while (cursor.pending &&
+                   cursor.sampleOffset == sampleOffset)
+            {
+                applyParameter (cursor.parameter, cursor.value);
+                loadParameterPoint (cursor, sampleOffset);
+            }
+        }
+        while (eventPending &&
+               currentEvent.sampleOffset == sampleOffset)
+        {
+            if (currentEvent.type == Event::kNoteOnEvent &&
+                currentEvent.noteOn.pitch >= 0 &&
+                currentEvent.noteOn.pitch <= 127)
+            {
+                engine.noteOn (
+                    static_cast<std::uint8_t> (
+                        currentEvent.noteOn.pitch),
+                    currentEvent.noteOn.velocity);
+            }
+            else if (
+                currentEvent.type == Event::kNoteOffEvent &&
+                currentEvent.noteOff.pitch >= 0 &&
+                currentEvent.noteOff.pitch <= 127)
+            {
+                engine.noteOff (
+                    static_cast<std::uint8_t> (
+                        currentEvent.noteOff.pitch));
+            }
+            if (data.outputEvents)
+                data.outputEvents->addEvent (currentEvent);
+            loadEvent (sampleOffset);
+        }
+        return true;
+    };
+
+    auto renderSegment = [&] (int32 sampleOffset, int32 frames) {
+        if (frames <= 0 || !leftOutput || !rightOutput)
+            return true;
+        if (engine.renderPlanar (
+                leftOutput + sampleOffset,
+                rightOutput + sampleOffset,
+                static_cast<std::uint32_t> (frames)))
+            return true;
+        std::fill_n (leftOutput + sampleOffset, frames, 0.0f);
+        std::fill_n (rightOutput + sampleOffset, frames, 0.0f);
+        return true;
+    };
+
+    SampleTimeline::render (
+        sampleCount,
+        peek,
+        applyAt,
+        renderSegment);
     return kResultOk;
 }
 
@@ -128,135 +287,98 @@ void Processor::handleBridge ()
     }
 }
 
-void Processor::handleEvents (IEventList* input, IEventList* output)
+void Processor::applyParameter (
+    ParamID parameter,
+    ParamValue rawValue) noexcept
 {
-    if (!input)
-        return;
-    Event event {};
-    for (int32 index = 0; index < input->getEventCount (); ++index)
+    const auto value = std::clamp (
+        std::isfinite (rawValue) ? rawValue : 0.0,
+        0.0,
+        1.0);
+    const auto byteValue = static_cast<std::uint8_t> (
+        std::clamp (std::lround (value * 127.0), 0L, 127L));
+    switch (parameter)
     {
-        if (input->getEvent (index, event) != kResultOk)
-            continue;
-        if (event.type == Event::kNoteOnEvent &&
-            event.noteOn.pitch >= 0 && event.noteOn.pitch <= 127)
-        {
-            engine.noteOn (
-                static_cast<std::uint8_t> (event.noteOn.pitch),
-                event.noteOn.velocity);
-        }
-        else if (
-            event.type == Event::kNoteOffEvent &&
-            event.noteOff.pitch >= 0 && event.noteOff.pitch <= 127)
-        {
-            engine.noteOff (
-                static_cast<std::uint8_t> (event.noteOff.pitch));
-        }
-        if (output)
-            output->addEvent (event);
-    }
-}
-
-void Processor::updateParameters (IParameterChanges* changes)
-{
-    if (!changes)
-        return;
-    for (int32 index = 0; index < changes->getParameterCount (); ++index)
-    {
-        auto* queue = changes->getParameterData (index);
-        if (!queue || queue->getPointCount () == 0)
-            continue;
-        int32 sampleOffset = 0;
-        ParamValue value = 0.0;
-        if (queue->getPoint (
-                queue->getPointCount () - 1,
-                sampleOffset,
-                value) != kResultOk)
-            continue;
-        const auto byteValue = static_cast<std::uint8_t> (
-            std::clamp (std::lround (value * 127.0), 0L, 127L));
-        switch (queue->getParameterId ())
-        {
-            case kMasterGainId:
-                engine.applySoundParameter (0, byteValue);
-                break;
-            case kVibratoDepthId:
-                engine.setVibratoDepth (static_cast<float> (value));
-                break;
-            case kExpressionId:
-                engine.setExpression (static_cast<float> (value));
-                break;
-            case kBrightnessId:
-                engine.applySoundParameter (20, byteValue);
-                break;
-            case kReverbMixId:
-                engine.applySoundParameter (16, byteValue);
-                break;
-            case kDelayMixId:
-                engine.applySoundParameter (17, byteValue);
-                break;
-            case kChorusMixId:
-                engine.applySoundParameter (19, byteValue);
-                break;
-            case kSoundProgramId:
-                engine.programChange (static_cast<std::uint8_t> (
-                    std::clamp (
-                        std::lround (
-                            value *
-                            static_cast<ParamValue> (
-                                Core::kPresetCount - 1)),
-                        0L,
-                        static_cast<long> (Core::kPresetCount - 1))));
-                break;
-            case kWaveformAId:
-                engine.applySoundParameter (1, byteValue);
-                break;
-            case kWaveformBId:
-                engine.applySoundParameter (2, byteValue);
-                break;
-            case kWaveformMixId:
-                engine.applySoundParameter (3, byteValue);
-                break;
-            case kAttackId:
-                engine.applySoundParameter (4, byteValue);
-                break;
-            case kDecayId:
-                engine.applySoundParameter (5, byteValue);
-                break;
-            case kSustainId:
-                engine.applySoundParameter (6, byteValue);
-                break;
-            case kReleaseId:
-                engine.applySoundParameter (7, byteValue);
-                break;
-            case kFilterTypeId:
-                engine.applySoundParameter (8, byteValue);
-                break;
-            case kFilterCutoffId:
-                engine.applySoundParameter (9, byteValue);
-                break;
-            case kFilterResonanceId:
-                engine.applySoundParameter (10, byteValue);
-                break;
-            case kFilterEnvelopeId:
-                engine.applySoundParameter (11, byteValue);
-                break;
-            case kDetuneId:
-                engine.applySoundParameter (12, byteValue);
-                break;
-            case kUnisonId:
-                engine.applySoundParameter (13, byteValue);
-                break;
-            case kPatchVibratoRateId:
-                engine.applySoundParameter (14, byteValue);
-                break;
-            case kPatchVibratoDepthId:
-                engine.applySoundParameter (15, byteValue);
-                break;
-            case kDelayTimeId:
-                engine.applySoundParameter (18, byteValue);
-                break;
-            default: break;
-        }
+        case kMasterGainId:
+            engine.applySoundParameter (0, byteValue);
+            break;
+        case kVibratoDepthId:
+            engine.setVibratoDepth (static_cast<float> (value));
+            break;
+        case kExpressionId:
+            engine.setExpression (static_cast<float> (value));
+            break;
+        case kBrightnessId:
+            engine.applySoundParameter (20, byteValue);
+            break;
+        case kReverbMixId:
+            engine.applySoundParameter (16, byteValue);
+            break;
+        case kDelayMixId:
+            engine.applySoundParameter (17, byteValue);
+            break;
+        case kChorusMixId:
+            engine.applySoundParameter (19, byteValue);
+            break;
+        case kSoundProgramId:
+            engine.programChange (static_cast<std::uint8_t> (
+                std::clamp (
+                    std::lround (
+                        value *
+                        static_cast<ParamValue> (
+                            Core::kPresetCount - 1)),
+                    0L,
+                    static_cast<long> (Core::kPresetCount - 1))));
+            break;
+        case kWaveformAId:
+            engine.applySoundParameter (1, byteValue);
+            break;
+        case kWaveformBId:
+            engine.applySoundParameter (2, byteValue);
+            break;
+        case kWaveformMixId:
+            engine.applySoundParameter (3, byteValue);
+            break;
+        case kAttackId:
+            engine.applySoundParameter (4, byteValue);
+            break;
+        case kDecayId:
+            engine.applySoundParameter (5, byteValue);
+            break;
+        case kSustainId:
+            engine.applySoundParameter (6, byteValue);
+            break;
+        case kReleaseId:
+            engine.applySoundParameter (7, byteValue);
+            break;
+        case kFilterTypeId:
+            engine.applySoundParameter (8, byteValue);
+            break;
+        case kFilterCutoffId:
+            engine.applySoundParameter (9, byteValue);
+            break;
+        case kFilterResonanceId:
+            engine.applySoundParameter (10, byteValue);
+            break;
+        case kFilterEnvelopeId:
+            engine.applySoundParameter (11, byteValue);
+            break;
+        case kDetuneId:
+            engine.applySoundParameter (12, byteValue);
+            break;
+        case kUnisonId:
+            engine.applySoundParameter (13, byteValue);
+            break;
+        case kPatchVibratoRateId:
+            engine.applySoundParameter (14, byteValue);
+            break;
+        case kPatchVibratoDepthId:
+            engine.applySoundParameter (15, byteValue);
+            break;
+        case kDelayTimeId:
+            engine.applySoundParameter (18, byteValue);
+            break;
+        default: break;
     }
 }
 

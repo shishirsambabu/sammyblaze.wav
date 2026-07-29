@@ -79,15 +79,26 @@ double wrapPhase (double phase) noexcept
     return phase;
 }
 
-float sineFromPhase (double phase) noexcept
+double advanceUnitPhase (double phase, double increment) noexcept
+{
+    phase += increment;
+    return phase >= 1.0 ? phase - 1.0 : phase;
+}
+
+float sineFromUnitPhase (double phase) noexcept
 {
     const auto tablePosition =
-        wrapPhase (phase) * static_cast<double> (sineTableSize);
+        phase * static_cast<double> (sineTableSize);
     const auto index = static_cast<std::size_t> (tablePosition);
     const auto fraction =
         static_cast<float> (tablePosition - static_cast<double> (index));
     const auto lower = sineTable.values[index];
     return lower + (sineTable.values[index + 1] - lower) * fraction;
+}
+
+float sineFromPhase (double phase) noexcept
+{
+    return sineFromUnitPhase (wrapPhase (phase));
 }
 
 float fastExp2 (float exponent) noexcept
@@ -143,7 +154,7 @@ float waveformSample (
     switch (waveform)
     {
         case Waveform::sine:
-            return sineFromPhase (phase);
+            return sineFromUnitPhase (phase);
         case Waveform::triangle:
             if (phase < 0.25)
                 return static_cast<float> (phase * 4.0);
@@ -169,21 +180,21 @@ float waveformSample (
             return value;
         }
         case Waveform::organ:
-            return sineFromPhase (phase) * 0.68f +
+            return sineFromUnitPhase (phase) * 0.68f +
                    sineFromPhase (phase * 2.0) * 0.22f +
                    sineFromPhase (phase * 3.0) * 0.10f;
         case Waveform::metal:
-            return sineFromPhase (phase) * 0.52f +
+            return sineFromUnitPhase (phase) * 0.52f +
                    sineFromPhase (phase * 2.41) * 0.30f +
                    sineFromPhase (phase * 5.31) * 0.18f;
         case Waveform::noise:
             return randomBipolar (noiseState);
         case Waveform::vocal:
-            return sineFromPhase (phase) * 0.58f +
+            return sineFromUnitPhase (phase) * 0.58f +
                    sineFromPhase (phase * 2.0) * 0.27f +
                    sineFromPhase (phase * 4.0) * 0.15f;
         case Waveform::wavetable:
-            return sineFromPhase (phase) * 0.62f +
+            return sineFromUnitPhase (phase) * 0.62f +
                    sineFromPhase (phase * 3.0) * 0.23f +
                    static_cast<float> (phase * 2.0 - 1.0) * 0.15f;
     }
@@ -268,11 +279,12 @@ std::uint32_t SynthEngine::maximumBlockSize () const noexcept
 
 void SynthEngine::updateVoiceTuning (Voice& voice) noexcept
 {
-    const auto unisonCount = std::clamp<int> (voice.preset.unisonVoices, 1, 3);
-    voice.effectiveUnisonVoices =
+    const auto unisonCount = std::clamp<int> (
+        voice.preset.unisonVoices,
+        1,
+        static_cast<int> (kMaximumUnisonVoices));
+    voice.requestedUnisonVoices =
         static_cast<std::uint8_t> (unisonCount);
-    voice.unisonGain =
-        1.0f / std::sqrt (static_cast<float> (unisonCount));
     voice.filterDamping =
         filterDamping (voice.preset.filterResonance);
     voice.filterCoefficientLimit = std::min (
@@ -598,16 +610,30 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
     }
 
     const auto unisonCount =
-        static_cast<int> (voice.effectiveUnisonVoices);
+        static_cast<int> (voice.requestedUnisonVoices);
+    const auto renderedLanes = std::min (
+        unisonCount,
+        static_cast<int> (renderedUnisonLanesPerVoice_));
     float oscillators = 0.0f;
-    for (int unison = 0; unison < unisonCount; ++unison)
+    for (int lane = 0; lane < renderedLanes; ++lane)
     {
+        const auto unison =
+            renderedLanes == unisonCount
+                ? lane
+                : renderedLanes == 1
+                      ? (unisonCount - 1) / 2
+                      : (lane * (unisonCount - 1) +
+                         (renderedLanes - 1) / 2) /
+                            (renderedLanes - 1);
         const auto index = static_cast<std::size_t> (unison);
         const auto frequency = voice.frequency[index] * vibratoRatio;
         const auto increment = std::min (frequency / sampleRate_, 0.45);
-        voice.phaseA[index] = wrapPhase (voice.phaseA[index] + increment);
+        voice.phaseA[index] =
+            advanceUnitPhase (voice.phaseA[index], increment);
         voice.phaseB[index] =
-            wrapPhase (voice.phaseB[index] + increment * 1.001);
+            advanceUnitPhase (
+                voice.phaseB[index],
+                increment * 1.001);
         const auto a = waveformSample (
             preset.waveformA,
             voice.phaseA[index],
@@ -621,8 +647,12 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
         oscillators += a * (1.0f - preset.waveformMix) +
                        b * preset.waveformMix;
     }
+    oscillatorWorkCount_ += static_cast<std::uint64_t> (renderedLanes);
+    const auto laneGain =
+        1.0f / std::sqrt (static_cast<float> (renderedLanes));
     oscillators *=
-        voice.unisonGain * voice.velocity * voice.envelope;
+        laneGain *
+        voice.velocity * voice.envelope;
 
     const auto cutoffOctaves =
         preset.filterEnvelope * voice.envelope * 4.0f +
@@ -643,7 +673,7 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
     const auto safeInput = std::isfinite (oscillators) ? oscillators : 0.0f;
     recovered = recovered || !std::isfinite (oscillators);
     const auto coefficient = std::clamp (
-        2.0f * sineFromPhase (
+        2.0f * sineFromUnitPhase (
                    static_cast<double> (cutoff) /
                    (2.0 * sampleRate_)),
         kMinimumFilterCoefficient,
@@ -695,7 +725,7 @@ void SynthEngine::renderSample (
     const auto vibratoSemitones =
         (static_cast<double> (currentPreset_.vibratoDepthSemitones) +
          gestureVibrato) *
-        sineFromPhase (lfoPhase_);
+        sineFromUnitPhase (lfoPhase_);
     const auto vibratoRatio =
         static_cast<double> (
             fastExp2 (static_cast<float> (vibratoSemitones / 12.0)));
@@ -706,8 +736,8 @@ void SynthEngine::renderSample (
         if (voice.active)
             mixed += renderVoice (voice, vibratoRatio);
     }
-    lfoPhase_ = wrapPhase (
-        lfoPhase_ +
+    lfoPhase_ = advanceUnitPhase (
+        lfoPhase_,
         static_cast<double> (currentPreset_.vibratoRateHz) / sampleRate_);
     mixed *= smoothedMasterGain_ * smoothedExpression_ * 0.13f;
 
@@ -727,7 +757,8 @@ void SynthEngine::renderSample (
             sampleRate_ *
             (0.018 +
              0.005 *
-                 (0.5 + 0.5 * sineFromPhase (lfoPhase_ * 0.73))));
+                 (0.5 +
+                  0.5 * sineFromUnitPhase (lfoPhase_ * 0.73))));
         const auto chorusTap =
             tap (std::max<std::size_t> (1, chorusMod));
         const auto feedbackSample =
@@ -774,6 +805,22 @@ bool SynthEngine::renderBlock (
 {
     if (!isReady () || frames == 0 || frames > maximumBlockSize_)
         return false;
+    const auto activeVoices = std::max<std::uint32_t> (
+        activeVoiceCount (),
+        1);
+    const auto requested = static_cast<std::uint8_t> (
+        std::clamp<std::size_t> (
+            currentPreset_.unisonVoices,
+            1,
+            kMaximumUnisonVoices));
+    const auto budgetedLanes = std::max<std::size_t> (
+        1,
+        kUnisonOscillatorBudgetPerSample /
+            static_cast<std::size_t> (activeVoices));
+    renderedUnisonLanesPerVoice_ = static_cast<std::uint8_t> (
+        std::min<std::size_t> (requested, budgetedLanes));
+    unisonQualityLimited_ =
+        renderedUnisonLanesPerVoice_ < requested;
     const auto requestedDelay = static_cast<std::size_t> (
         sampleRate_ * static_cast<double> (currentPreset_.delayTimeMs) /
         1000.0);
@@ -852,6 +899,8 @@ void SynthEngine::panic () noexcept
         voice = {};
     sustainEnabled_ = false;
     lfoPhase_ = 0.0;
+    renderedUnisonLanesPerVoice_ = 1;
+    unisonQualityLimited_ = false;
     clearEffectBuffer ();
 }
 
@@ -866,6 +915,30 @@ std::uint32_t SynthEngine::activeVoiceCount () const noexcept
 std::uint64_t SynthEngine::nonfiniteRecoveryCount () const noexcept
 {
     return nonfiniteRecoveryCount_.load (std::memory_order_relaxed);
+}
+
+std::uint8_t SynthEngine::requestedUnisonVoices () const noexcept
+{
+    return static_cast<std::uint8_t> (
+        std::clamp<std::size_t> (
+            currentPreset_.unisonVoices,
+            1,
+            kMaximumUnisonVoices));
+}
+
+std::uint8_t SynthEngine::renderedUnisonLanesPerVoice () const noexcept
+{
+    return renderedUnisonLanesPerVoice_;
+}
+
+bool SynthEngine::unisonQualityLimited () const noexcept
+{
+    return unisonQualityLimited_;
+}
+
+std::uint64_t SynthEngine::oscillatorWorkCount () const noexcept
+{
+    return oscillatorWorkCount_;
 }
 
 const SynthPreset& SynthEngine::currentPreset () const noexcept

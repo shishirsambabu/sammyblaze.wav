@@ -87,6 +87,15 @@ SBW_AUDIO_CORE_API uint32_t sbw_audio_core_active_voice_count (
     const sbw_audio_core* core);
 SBW_AUDIO_CORE_API uint64_t sbw_audio_core_nonfinite_recovery_count (
     const sbw_audio_core* core);
+// Optional ABI v1 diagnostics. Clients must resolve these symbols dynamically
+// when they also support older Phase 9.2 audio-core DLLs.
+SBW_AUDIO_CORE_API uint32_t sbw_audio_core_requested_unison_voices (
+    const sbw_audio_core* core);
+SBW_AUDIO_CORE_API uint32_t
+sbw_audio_core_rendered_unison_lanes_per_voice (
+    const sbw_audio_core* core);
+SBW_AUDIO_CORE_API uint32_t sbw_audio_core_unison_quality_limited (
+    const sbw_audio_core* core);
 
 #ifdef __cplusplus
 }
