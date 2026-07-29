@@ -68,3 +68,21 @@ The first Phase 8 slice is delivered: a scalable dark-cyan cockpit, dedicated So
 18 hardware-style sound controls, live standalone/VST3 patch editing, and versioned local user
 preset save/load/delete. Tempo/PPQ-aware looping and the remaining workstation functions are
 the next slices.
+
+## Phase 9 — instrument kernel stabilization (in progress)
+
+Exit criteria: camera and audio startup are bounded and cancellable; shutdown is deterministic;
+all factory programs remain finite in standalone and native renderers; audio failures are
+performer-visible; live UI commands cross thread boundaries through bounded queues; and measured
+standalone/native polyphony meets the supported real-time budget with safety headroom.
+
+Phase 9.1 delivers bounded, cancellable Windows camera opening, clean desktop-worker cancellation,
+finite-value containment and exhaustive 120-program DSP gates for both renderers, native
+multi-rate DSP validation, visible standalone callback/xrun diagnostics, truthful arm/sustain
+state, and bounded UI-to-runtime command marshalling. Physical acceptance passed five CLI camera
+open/track/close cycles and three desktop-worker start/stop cycles on the development machine.
+
+Remaining Phase 9 work: move the standalone product onto a shared native real-time audio core,
+meet the polyphony budget with at least 2x headroom, add steady-state camera-read failure recovery,
+make VST MIDI and automation sample-accurate, and complete repeated clean-machine hardware/DAW
+soak tests.

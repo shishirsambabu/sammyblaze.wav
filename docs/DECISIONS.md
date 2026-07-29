@@ -39,3 +39,20 @@ allocation, logging, camera work, or Python calls.
 `LoopTransport` reference-counts ownership conceptually between live and loop sources. A loop
 note-off only reaches the sink when the performer is not also holding that note, preventing
 audible note theft during overdub-like performance.
+
+## ADR-009: hardware acquisition has a bounded cancellation contract
+
+Native camera constructors and first-frame reads may block inside operating-system code. Camera
+opening therefore runs behind bounded daemon workers with one total deadline, a process-wide
+worker cap, and an external cancellation event. A late capture is abandoned and released instead
+of being published. The desktop worker passes its stop event through the runtime into the camera
+adapter and treats an explicitly cancelled open as a clean stop.
+
+## ADR-010: factory DSP finiteness is a release gate
+
+Every supported factory program must render finite output across the supported sample-rate and
+brightness envelope before packaging. Standalone and native renderers contain invalid state at
+their DSP boundaries and expose recoveries instead of silently propagating NaN samples. The
+native gate shares filter helpers and the factory catalog with the VST build; the standalone gate
+renders all factory programs through `SynthEngine`. Finiteness is necessary but not sufficient:
+real-time deadline headroom remains a separate Phase 9 acceptance gate.
