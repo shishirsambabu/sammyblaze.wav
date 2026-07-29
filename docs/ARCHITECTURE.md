@@ -13,7 +13,7 @@ flowchart LR
   H --> N[Note manager]
   L --> N
   N --> R[Loop transport]
-  R --> M[MIDI / SoundFont]
+  R --> M[MIDI / SoundFont / built-in synth]
   R --> B[Localhost bridge]
   B --> Q[Lock-free plug-in mailbox]
   Q --> P[VST3 synth + effects]
@@ -67,6 +67,7 @@ All outputs implement the same note/control contract:
 
 - Mido for hardware or virtual MIDI;
 - FluidSynth for standalone SoundFont audio;
+- a direct SoundDevice renderer for the shared 120-sound synthesis catalog;
 - a fixed-size localhost packet bridge for the native VST3.
 
 The companion sends 14-byte `SBW1` datagrams only to `127.0.0.1:18736`. The VST3 receives them
@@ -74,8 +75,10 @@ on a background socket thread and places validated commands into a bounded SPSC 
 thread drains that queue without socket calls, locks, memory allocation, Python, camera access,
 or network access.
 
-The VST3 also accepts ordinary DAW MIDI. It owns a native polyphonic synth, sustain behavior,
-parameter smoothing, stereo reverb/delay/chorus, parameter state, and generated-MIDI output.
+The built-in and VST3 renderers consume the same stable factory program IDs and synthesis
+parameters. The VST3 also accepts ordinary DAW MIDI. It owns a native 24-voice dual-oscillator
+synth, ADSR and sustain behavior, multimode filters, bounded unison, parameter smoothing, stereo
+reverb/delay/chorus, parameter state, and generated-MIDI output.
 DAW transport synchronization and PPQ-quantized loop scenes are the next native transport slice;
 the current companion loop is wall-clock based.
 

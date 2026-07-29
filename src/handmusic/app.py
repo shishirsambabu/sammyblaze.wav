@@ -18,6 +18,7 @@ from handmusic.diagnostics import collect_diagnostics, render_diagnostics
 from handmusic.gestures.features import extract_features
 from handmusic.gestures.state_machine import GestureConfig, GestureStateMachine
 from handmusic.ml.session import record_camera_session
+from handmusic.music.builtin_synth import BuiltinSynthOutput
 from handmusic.music.chord_engine import ChordSpec, chord_notes
 from handmusic.music.expression import ExpressionController, ExpressionState
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput, PluginBridgeOutput
@@ -30,6 +31,7 @@ from handmusic.music.performance import (
     lead_mode_for_scale_name,
     midi_note_name,
 )
+from handmusic.music.presets import get_preset
 from handmusic.music.progression import (
     Progression,
     pose_chords_for,
@@ -73,6 +75,7 @@ class InstrumentRuntime:
     tracking_loss_grace_ms: int = 1500
     right_hand_loss_grace_ms: int = 250
     expression_state: ExpressionState = field(default_factory=ExpressionState)
+    sound_program: int = 0
     _last_cc: dict[int, tuple[int, int]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
@@ -96,7 +99,8 @@ class InstrumentRuntime:
         return (
             f"Mode: {self.mode.value} | Chord latch: {latch} | Pedal: {pedal} | "
             f"Chord: {chord_notes} | Melody: {melody_note} | "
-            f"Lead: {self.scale.label} ({self.scale.mode.value})"
+            f"Lead: {self.scale.label} ({self.scale.mode.value}) | "
+            f"Sound: {get_preset(self.sound_program).name}"
         )
 
     def handle_features(self, features: GestureFeatures) -> int:
@@ -224,6 +228,11 @@ class InstrumentRuntime:
             return TransportSnapshot(False, False, 0, 0)
         self.transport.clear()
         return self.transport.snapshot()
+
+    def select_sound(self, program: int) -> None:
+        get_preset(program)
+        self.sound_program = program
+        self.notes.program_change(program)
 
     def release_melody_for_tracking_loss(self) -> None:
         self.notes.stop_melody_note()
@@ -475,8 +484,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--camera", type=int, default=None)
     parser.add_argument(
         "--output",
-        choices=("midi", "plugin", "standalone", "null"),
-        default="midi",
+        choices=("synth", "midi", "plugin", "standalone", "null"),
+        default="synth",
     )
     parser.add_argument("--midi-port", default=None, help="MIDI output port name")
     parser.add_argument(
@@ -490,6 +499,14 @@ def main(argv: list[str] | None = None) -> int:
         choices=scale_names(),
         default="major",
         help="right-hand scale mapping",
+    )
+    parser.add_argument(
+        "--sound-program",
+        type=int,
+        choices=range(120),
+        default=0,
+        metavar="0-119",
+        help="factory sound program (0-119)",
     )
     parser.add_argument("--soundfont", default=None, help="SoundFont path for standalone output")
     parser.add_argument(
@@ -535,7 +552,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run or args.calibrate or args.record:
             parser.error("--ui cannot be combined with --dry-run, --calibrate, or --record")
         if args.output == "standalone":
-            parser.error("--ui currently supports --output midi, plugin, or null")
+            parser.error("--ui supports --output synth, midi, plugin, or null")
         from handmusic.ui.desktop import launch_ui
 
         return launch_ui(
@@ -544,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
             args.output,
             args.progression,
             args.scale,
+            args.sound_program,
         )
     if args.diagnostics:
         print(render_diagnostics(collect_diagnostics(args.hand_model)))
@@ -585,6 +603,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.dry_run or args.output == "null":
         output = MemoryMidiOutput()
+    elif args.output == "synth":
+        output = BuiltinSynthOutput(args.sound_program)
     elif args.output == "midi":
         output = MidoOutput(midi_port)
     elif args.output == "plugin":
@@ -594,6 +614,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--soundfont is required with --output standalone")
         output = FluidSynthOutput(soundfont)
     runtime, output = default_runtime(output, preset, args.progression, args.scale)
+    runtime.select_sound(args.sound_program)
     telemetry = PerformanceTelemetry()
     try:
         with _shutdown_guard(runtime):

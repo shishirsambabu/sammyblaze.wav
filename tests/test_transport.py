@@ -81,3 +81,19 @@ def test_clear_releases_loop_notes_and_resets_transport() -> None:
         "event_count": 0,
         "loop_length_ms": 0,
     }
+
+
+def test_program_changes_are_recorded_and_replayed() -> None:
+    now = [0]
+    sink = MemoryMidiOutput()
+    transport = LoopTransport(sink, clock_ms=lambda: now[0])
+
+    transport.start_recording()
+    now[0] = 100
+    transport.program_change(37)
+    now[0] = 600
+    assert transport.stop_recording()
+    assert transport.start_playback(600)
+    transport.tick(700)
+
+    assert sink.messages.count(("program", 37, None)) == 2

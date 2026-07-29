@@ -14,6 +14,7 @@ enum class BridgeMessageType : std::uint8_t
     noteOff = 2,
     controlChange = 3,
     panic = 4,
+    programChange = 5,
 };
 
 struct BridgeMessage

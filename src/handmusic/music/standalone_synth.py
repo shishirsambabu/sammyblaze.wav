@@ -35,6 +35,11 @@ class FluidSynthOutput:
     def control_change(self, control: int, value: int) -> None:
         self._synth.cc(0, control, value)
 
+    def program_change(self, program: int) -> None:
+        from handmusic.music.presets import get_preset
+
+        self._synth.program_change(0, get_preset(program).midi_program)
+
     def close(self) -> None:
         if not self._closed:
             self._synth.delete()

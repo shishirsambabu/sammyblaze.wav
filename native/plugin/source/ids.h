@@ -13,6 +13,7 @@ enum ParameterIds : Steinberg::Vst::ParamID
     kReverbMixId = 104,
     kDelayMixId = 105,
     kChorusMixId = 106,
+    kSoundProgramId = 107,
 };
 
 static DECLARE_UID (

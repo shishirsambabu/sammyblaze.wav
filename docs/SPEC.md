@@ -19,6 +19,7 @@ It must be usable without an LLM, cloud service, or internet connection after in
 - Chord voicing for major, minor, diminished, augmented, and seventh chords.
 - MIDI note and control output with guaranteed cleanup.
 - Optional FluidSynth/SoundFont output behind the same output contract.
+- Direct built-in polyphonic synthesis with at least 100 stable factory sounds.
 - Native VST3 instrument with localhost gesture control and ordinary host MIDI.
 - Loop record/play/clear with independent live and loop note ownership.
 - Dry-run mode, diagnostics overlay, YAML configuration, and tests.

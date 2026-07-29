@@ -5,7 +5,9 @@ from threading import Event
 from typing import Any
 
 from handmusic.app import default_runtime, run_camera
+from handmusic.music.builtin_synth import BuiltinSynthOutput
 from handmusic.music.midi_output import MemoryMidiOutput, MidoOutput, PluginBridgeOutput
+from handmusic.music.presets import category_names, get_preset, presets_by_category
 from handmusic.music.progression import progression_names
 from handmusic.music.scale import scale_names
 from handmusic.telemetry import PerformanceTelemetry, TelemetrySnapshot
@@ -43,9 +45,10 @@ except ImportError as _PY_SIDE_ERROR:  # pragma: no cover - depends on optional 
     def launch_ui(
         camera_index: int = 0,
         midi_port: str | None = None,
-        output_mode: str = "midi",
+        output_mode: str = "synth",
         progression_name: str = "pop",
         scale_name: str = "major",
+        sound_program: int = 0,
     ) -> int:
         raise RuntimeError(
             "Install the [ui] extra to use the desktop performer UI"
@@ -63,6 +66,7 @@ else:
         performance_state = Signal(str)
         expression_updated = Signal(object)
         transport_updated = Signal(object)
+        camera_index_changed = Signal(int)
 
         def __init__(
             self,
@@ -71,6 +75,7 @@ else:
             midi_port: str | None,
             progression_name: str = "pop",
             scale_name: str = "major",
+            sound_program: int = 0,
         ) -> None:
             super().__init__()
             self.camera_index = camera_index
@@ -78,6 +83,7 @@ else:
             self.midi_port = midi_port
             self.progression_name = progression_name
             self.scale_name = scale_name
+            self.sound_program = sound_program
             self.stop_event = Event()
             self.runtime: Any | None = None
 
@@ -124,14 +130,24 @@ else:
                 self.runtime.stop_for_tracking_loss()
                 self._publish_state(self.runtime.status_label)
 
+        def select_sound(self, program: int) -> None:
+            self.sound_program = program
+            if self.runtime is not None:
+                self.runtime.select_sound(program)
+                self._publish_state(self.runtime.status_label)
+
         def run(self) -> None:  # pragma: no cover - requires a desktop and camera
             runtime = None
             telemetry = PerformanceTelemetry()
             error_message: str | None = None
             try:
-                if self.output_mode == "midi":
+                if self.output_mode == "synth":
+                    self.state_changed.emit("Starting built-in audio engine...")
+                    output: Any = BuiltinSynthOutput(self.sound_program)
+                    self.midi_health.emit("Audio: built-in 120-sound synth")
+                elif self.output_mode == "midi":
                     self.state_changed.emit("Connecting MIDI...")
-                    output: Any = MidoOutput(self.midi_port)
+                    output = MidoOutput(self.midi_port)
                     self.midi_health.emit(f"MIDI: connected ({self.midi_port or 'default'})")
                 elif self.output_mode == "plugin":
                     self.state_changed.emit("Connecting plug-in bridge...")
@@ -147,20 +163,30 @@ else:
                     scale_name=self.scale_name,
                 )
                 self.runtime = runtime
+                runtime.select_sound(self.sound_program)
+                self._publish_state(runtime.status_label)
                 self.state_changed.emit("Running")
                 self.camera_health.emit("Camera: opening...")
-                run_camera(
-                    runtime,
-                    self.camera_index,
-                    telemetry=telemetry,
-                    stop_event=self.stop_event,
-                    telemetry_callback=self._publish_telemetry,
-                    frame_callback=self._publish_frame,
-                    state_callback=self._publish_state,
-                    expression_callback=self._publish_expression,
-                    transport_callback=self._publish_transport,
-                    display=False,
-                )
+                camera_kwargs = {
+                    "telemetry": telemetry,
+                    "stop_event": self.stop_event,
+                    "telemetry_callback": self._publish_telemetry,
+                    "frame_callback": self._publish_frame,
+                    "state_callback": self._publish_state,
+                    "expression_callback": self._publish_expression,
+                    "transport_callback": self._publish_transport,
+                    "display": False,
+                }
+                try:
+                    run_camera(runtime, self.camera_index, **camera_kwargs)
+                except RuntimeError as exc:
+                    if self.camera_index == 0 or "Could not read camera" not in str(exc):
+                        raise
+                    self.camera_health.emit(
+                        f"Camera {self.camera_index} unavailable; retrying camera 0..."
+                    )
+                    self.camera_index_changed.emit(0)
+                    run_camera(runtime, 0, **camera_kwargs)
             except Exception as exc:
                 error_message = f"{type(exc).__name__}: {exc}"
                 self.camera_health.emit("Camera: error")
@@ -180,9 +206,10 @@ else:
             self,
             camera_index: int = 0,
             midi_port: str | None = None,
-            output_mode: str = "midi",
+            output_mode: str = "synth",
             progression_name: str = "pop",
             scale_name: str = "major",
+            sound_program: int = 0,
         ) -> None:
             super().__init__()
             self.setWindowTitle("SammyBlaze.wav Performer")
@@ -191,6 +218,7 @@ else:
             self._preferred_midi_port = midi_port
             self._preferred_progression = progression_name
             self._preferred_scale = scale_name
+            self._preferred_sound_program = sound_program
             self._last_frame: QImage | None = None
 
             central = QWidget()
@@ -203,10 +231,15 @@ else:
             form.addRow("Camera index", self.camera)
 
             self.output = QComboBox()
+            self.output.addItem("Built-in synth (120 sounds)", "synth")
             self.output.addItem("MIDI", "midi")
             self.output.addItem("FL Studio / VST3 bridge", "plugin")
             self.output.addItem("Null output", "null")
-            requested_mode = output_mode if output_mode in ("midi", "plugin", "null") else "midi"
+            requested_mode = (
+                output_mode
+                if output_mode in ("synth", "midi", "plugin", "null")
+                else "synth"
+            )
             self.output.setCurrentIndex(self.output.findData(requested_mode))
             form.addRow("Output", self.output)
 
@@ -225,6 +258,18 @@ else:
             if scale_index >= 0:
                 self.scale.setCurrentIndex(scale_index)
             form.addRow("Starting lead mode", self.scale)
+
+            self.sound_category = QComboBox()
+            for category in category_names():
+                self.sound_category.addItem(category.replace("_", " ").title(), category)
+            preferred_preset = get_preset(self._preferred_sound_program)
+            category_index = self.sound_category.findData(preferred_preset.category)
+            if category_index >= 0:
+                self.sound_category.setCurrentIndex(category_index)
+            form.addRow("Sound category", self.sound_category)
+
+            self.sound = QComboBox()
+            form.addRow("Factory sound", self.sound)
 
             self.midi_port = QComboBox()
             form.addRow("MIDI output", self.midi_port)
@@ -310,7 +355,37 @@ else:
 
             self.setCentralWidget(central)
             self.output.currentIndexChanged.connect(self._update_port_enabled)
+            self.sound_category.currentIndexChanged.connect(self.refresh_sounds)
+            self.sound.currentIndexChanged.connect(self.select_sound)
+            self.refresh_sounds()
             self.refresh_ports()
+
+        def refresh_sounds(self, _index: int = -1) -> None:
+            selected = (
+                self.sound.currentData()
+                if self.sound.count()
+                else self._preferred_sound_program
+            )
+            self.sound.blockSignals(True)
+            self.sound.clear()
+            for preset in presets_by_category(self.sound_category.currentData()):
+                self.sound.addItem(preset.name, preset.program_id)
+            index = self.sound.findData(selected)
+            self.sound.setCurrentIndex(index if index >= 0 else 0)
+            self.sound.blockSignals(False)
+            self.select_sound()
+
+        def select_sound(self, _index: int = -1) -> None:
+            program = self.sound.currentData()
+            if program is None:
+                return
+            preset = get_preset(int(program))
+            self.status.setText(
+                f"Sound {preset.program_id + 1}/120: {preset.name} "
+                f"({preset.category.replace('_', ' ')})"
+            )
+            if self.worker is not None and self.worker.isRunning():
+                self.worker.select_sound(preset.program_id)
 
         def refresh_ports(self) -> None:
             selected = self.midi_port.currentData() or self._preferred_midi_port
@@ -356,12 +431,14 @@ else:
                 midi_port=self.midi_port.currentData(),
                 progression_name=self.progression.currentData(),
                 scale_name=self.scale.currentData(),
+                sound_program=int(self.sound.currentData() or 0),
             )
             self.worker.state_changed.connect(self.status.setText)
             self.worker.telemetry_updated.connect(self.update_telemetry)
             self.worker.failed.connect(self.status.setText)
             self.worker.frame_ready.connect(self.update_frame)
             self.worker.camera_health.connect(self.camera_health.setText)
+            self.worker.camera_index_changed.connect(self.camera.setValue)
             self.worker.midi_health.connect(self.midi_health.setText)
             self.worker.performance_state.connect(self.performance_state.setText)
             self.worker.expression_updated.connect(self.expression_playground.update_state)
@@ -463,9 +540,10 @@ else:
     def launch_ui(
         camera_index: int = 0,
         midi_port: str | None = None,
-        output_mode: str = "midi",
+        output_mode: str = "synth",
         progression_name: str = "pop",
         scale_name: str = "major",
+        sound_program: int = 0,
     ) -> int:
         app = QApplication.instance() or QApplication(sys.argv)
         window = PerformerWindow(
@@ -474,6 +552,7 @@ else:
             output_mode,
             progression_name,
             scale_name,
+            sound_program,
         )
         window.show()
         return app.exec()

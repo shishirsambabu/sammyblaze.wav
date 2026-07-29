@@ -7,6 +7,8 @@ set(sammyblaze_plugin_sources
     source/ids.h
     source/processor.cpp
     source/processor.h
+    source/presets.cpp
+    source/presets.h
     source/version.h
 )
 

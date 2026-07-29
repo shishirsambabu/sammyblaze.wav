@@ -7,6 +7,7 @@ class NoteSink(Protocol):
     def note_on(self, note: int, velocity: int) -> None: ...
     def note_off(self, note: int) -> None: ...
     def control_change(self, control: int, value: int) -> None: ...
+    def program_change(self, program: int) -> None: ...
 
 
 def _midi(value: int) -> int:
@@ -85,6 +86,11 @@ class NoteManager:
         if self._closed:
             raise RuntimeError("note manager is closed")
         self.sink.control_change(_midi(control), _midi(value))
+
+    def program_change(self, program: int) -> None:
+        if self._closed:
+            raise RuntimeError("note manager is closed")
+        self.sink.program_change(_midi(program))
 
     def stop_all(self) -> None:
         for note in tuple(self.active_notes):

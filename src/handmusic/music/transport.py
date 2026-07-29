@@ -6,7 +6,7 @@ from threading import RLock
 from time import monotonic
 from typing import Literal
 
-MidiEventKind = Literal["note_on", "note_off", "cc"]
+MidiEventKind = Literal["note_on", "note_off", "cc", "program"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +99,12 @@ class LoopTransport:
             self._ensure_open()
             self.sink.control_change(control, value)
             self._record("cc", control, value)
+
+    def program_change(self, program: int) -> None:
+        with self._lock:
+            self._ensure_open()
+            self.sink.program_change(program)
+            self._record("program", program, 0)
 
     def start_recording(self, timestamp_ms: int | None = None) -> None:
         with self._lock:
@@ -221,8 +227,10 @@ class LoopTransport:
             self._loop_notes.discard(event.data1)
             if event.data1 not in self._live_notes:
                 self.sink.note_off(event.data1)
-        else:
+        elif event.kind == "cc":
             self.sink.control_change(event.data1, event.data2)
+        else:
+            self.sink.program_change(event.data1)
 
     def _stop_playback_locked(self) -> None:
         self._playing = False

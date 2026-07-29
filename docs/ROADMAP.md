@@ -4,9 +4,12 @@
 
 Exit criteria: repository rules, contracts, deterministic chord engine, note cleanup, test harness, and agent roster exist.
 
-## Phase 1 — camera diagnostics (in progress)
+## Phase 1 — camera diagnostics (delivered)
 
-Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/confidence/FPS are overlaid, and clean shutdown works. The current implementation includes a bounded latest-frame capture path and hardware-independent queue tests; physical webcam verification remains an opt-in smoke test.
+Exit criteria: webcam opens, up to two hands are tracked, landmarks/handedness/confidence/FPS are
+overlaid, and clean shutdown works. The Windows capture path now probes DirectShow, Media
+Foundation, and automatic backends, verifies a real first frame, prevents stale-frame buildup,
+and falls back to camera 0. It has passed physical 640x480 webcam and UI-worker smoke tests.
 
 ## Phase 2 — playable progression (in progress)
 
@@ -19,9 +22,10 @@ pinch re-articulation, and desktop/overlay note feedback.
 ## Phase 3 — expression and standalone audio (in progress)
 
 Exit criteria: vertical/horizontal/depth/pinch movement controls smoothed bounded volume,
-expression, pan, reverb, delay, and chorus CC values, and a SoundFont adapter plays without a DAW.
-The current implementation covers mapping and adapter hardening; physical FluidSynth verification
-remains environment-dependent.
+expression, pan, reverb, delay, and chorus values, and the app plays without a DAW. The current
+implementation includes a physically verified SoundDevice engine, 24-voice bounded polyphony,
+dual oscillators, ADSR, filters, unison, effects, limiting, and 120 factory sounds; FluidSynth
+remains an optional external SoundFont route.
 
 ## Phase 4 — calibration and presets (in progress)
 
@@ -46,10 +50,12 @@ Exit criteria: a native VST3 can be loaded by FL Studio, accepts host MIDI and d
 companion control, renders sound and effects without Python on the audio thread, persists
 automatable state, and passes Steinberg validation.
 
-The current slice delivers a validated C++20 VST3, localhost gesture bridge, sixteen-voice synth,
-sustain, parameter smoothing, reverb/delay/chorus, and a D:-based build. Physical FL Studio
-discovery is the remaining workstation smoke test. Host-synchronized PPQ looping, multi-instance
-routing, MPE/note expression, presets, signing, and installer integration are next.
+The current slice delivers a validated C++20 VST3, localhost gesture bridge, 24-voice dual-
+oscillator synth, ADSR, multimode filters, unison, sustain, parameter smoothing,
+reverb/delay/chorus, a shared 120-sound library, live bridge program changes, and a D:-based
+build. Physical FL Studio discovery is the remaining workstation smoke test. Host-synchronized
+PPQ looping, multi-instance routing, MPE/note expression, signing, and installer integration are
+next.
 
 ## Phase 8 — performance workstation
 

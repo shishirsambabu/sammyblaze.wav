@@ -7,11 +7,100 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Steinberg::Vst::SammyBlaze {
 namespace {
+
 constexpr double twoPi = 6.28318530717958647692;
+constexpr float minimumEnvelopeTimeMs = 0.5f;
+
+double wrapPhase (double phase) noexcept
+{
+    phase -= std::floor (phase);
+    return phase;
 }
+
+float polyBlep (double phase, double increment) noexcept
+{
+    if (increment <= 0.0)
+        return 0.0f;
+    if (phase < increment)
+    {
+        const auto t = phase / increment;
+        return static_cast<float> (t + t - t * t - 1.0);
+    }
+    if (phase > 1.0 - increment)
+    {
+        const auto t = (phase - 1.0) / increment;
+        return static_cast<float> (t * t + t + t + 1.0);
+    }
+    return 0.0f;
+}
+
+float randomBipolar (std::uint32_t& state) noexcept
+{
+    state = state * 1664525U + 1013904223U;
+    return static_cast<float> ((state >> 8U) & 0x00FFFFFFU) /
+               static_cast<float> (0x007FFFFFU) -
+           1.0f;
+}
+
+float waveformSample (
+    Waveform waveform,
+    double phase,
+    double increment,
+    std::uint32_t& noiseState) noexcept
+{
+    const auto angle = phase * twoPi;
+    switch (waveform)
+    {
+        case Waveform::sine:
+            return static_cast<float> (std::sin (angle));
+        case Waveform::triangle:
+            return static_cast<float> ((2.0 / 3.14159265358979323846) *
+                                       std::asin (std::sin (angle)));
+        case Waveform::saw:
+            return static_cast<float> (phase * 2.0 - 1.0) -
+                   polyBlep (phase, increment);
+        case Waveform::square:
+        {
+            auto value = phase < 0.5 ? 1.0f : -1.0f;
+            value += polyBlep (phase, increment);
+            value -= polyBlep (wrapPhase (phase + 0.5), increment);
+            return value;
+        }
+        case Waveform::pulse:
+        {
+            constexpr double duty = 0.28;
+            auto value = phase < duty ? 1.0f : -1.0f;
+            value += polyBlep (phase, increment);
+            value -= polyBlep (wrapPhase (phase + 1.0 - duty), increment);
+            return value;
+        }
+        case Waveform::organ:
+            return static_cast<float> (
+                std::sin (angle) * 0.68 + std::sin (angle * 2.0) * 0.22 +
+                std::sin (angle * 3.0) * 0.10);
+        case Waveform::metal:
+            return static_cast<float> (
+                std::sin (angle) * 0.52 + std::sin (angle * 2.41) * 0.30 +
+                std::sin (angle * 5.31) * 0.18);
+        case Waveform::noise:
+            return randomBipolar (noiseState);
+        case Waveform::vocal:
+            return static_cast<float> (
+                std::sin (angle) * 0.58 + std::sin (angle * 2.0) * 0.27 +
+                std::sin (angle * 4.0) * 0.15);
+        case Waveform::wavetable:
+            return static_cast<float> (
+                std::sin (angle) * 0.62 + std::sin (angle * 3.0) * 0.23 +
+                (phase * 2.0 - 1.0) * 0.15);
+    }
+    return 0.0f;
+}
+
+} // namespace
 
 Processor::Processor ()
 {
@@ -26,6 +115,7 @@ tresult PLUGIN_API Processor::initialize (FUnknown* context)
     addAudioOutput (STR16 ("Stereo Out"), SpeakerArr::kStereo);
     addEventInput (STR16 ("MIDI In"), 16);
     addEventOutput (STR16 ("Generated MIDI"), 16);
+    applyPreset (0);
     bridge.start ();
     return kResultOk;
 }
@@ -60,7 +150,7 @@ tresult PLUGIN_API Processor::setupProcessing (ProcessSetup& setup)
         return result;
     const auto sampleRate = setup.sampleRate > 0.0 ? setup.sampleRate : 44100.0;
     effectBuffer.assign (
-        static_cast<std::size_t> (std::ceil (sampleRate * 2.0)),
+        static_cast<std::size_t> (std::ceil (sampleRate * 2.6)),
         0.0f);
     effectWriteIndex = 0;
     return kResultOk;
@@ -90,9 +180,13 @@ tresult PLUGIN_API Processor::process (ProcessData& data)
     const auto sampleRate = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 44100.0;
     const auto smoothing = 1.0 - std::exp (-1.0 / (sampleRate * 0.015));
     const auto bufferSize = effectBuffer.size ();
-    const auto delaySamples = static_cast<std::size_t> (sampleRate * 0.34);
+    const auto requestedDelay = static_cast<std::size_t> (
+        sampleRate * static_cast<double> (currentPreset.delayTimeMs) / 1000.0);
+    const auto delaySamples =
+        bufferSize > 1 ? std::clamp<std::size_t> (requestedDelay, 1, bufferSize - 1) : 0;
     const auto reverbSamplesA = static_cast<std::size_t> (sampleRate * 0.061);
     const auto reverbSamplesB = static_cast<std::size_t> (sampleRate * 0.089);
+
     for (int32 sample = 0; sample < data.numSamples; ++sample)
     {
         smoothedMasterGain += (masterGain - smoothedMasterGain) * smoothing;
@@ -101,30 +195,20 @@ tresult PLUGIN_API Processor::process (ProcessData& data)
         smoothedReverbMix += (reverbMix - smoothedReverbMix) * smoothing;
         smoothedDelayMix += (delayMix - smoothedDelayMix) * smoothing;
         smoothedChorusMix += (chorusMix - smoothedChorusMix) * smoothing;
-        const auto vibrato = std::sin (lfoPhase) * vibratoDepth * 40.0;
+
         float mixed = 0.0f;
         for (auto& voice : voices)
         {
-            if (!voice.active)
-                continue;
-            const auto semitones = static_cast<double> (voice.pitch) - 69.0 + vibrato / 100.0;
-            const auto frequency = 440.0 * std::pow (2.0, semitones / 12.0);
-            voice.phase += twoPi * frequency / sampleRate;
-            if (voice.phase >= twoPi)
-                voice.phase -= twoPi;
-            const auto fundamental = std::sin (voice.phase);
-            const auto harmonic =
-                std::sin (voice.phase * 2.0) * smoothedBrightness * 0.22;
-            mixed += static_cast<float> ((fundamental + harmonic) * voice.velocity);
+            if (voice.active)
+                mixed += renderVoice (voice, sampleRate);
         }
-        lfoPhase += twoPi * 5.0 / sampleRate;
-        if (lfoPhase >= twoPi)
-            lfoPhase -= twoPi;
-        mixed *= static_cast<float> (smoothedMasterGain * smoothedExpression * 0.11);
+        lfoPhase = wrapPhase (
+            lfoPhase + static_cast<double> (currentPreset.vibratoRateHz) / sampleRate);
+        mixed *= static_cast<float> (smoothedMasterGain * smoothedExpression * 0.13);
 
         float left = mixed;
         float right = mixed;
-        if (bufferSize > delaySamples + 1)
+        if (bufferSize > reverbSamplesB + 1 && delaySamples > 0)
         {
             const auto tap = [this, bufferSize] (std::size_t samplesBack) {
                 return effectBuffer[
@@ -133,10 +217,10 @@ tresult PLUGIN_API Processor::process (ProcessData& data)
             const auto delayTap = tap (delaySamples);
             const auto reverbA = tap (reverbSamplesA);
             const auto reverbB = tap (reverbSamplesB);
-            const auto chorusMod =
-                static_cast<std::size_t> (
-                    sampleRate * (0.018 + 0.005 * (0.5 + 0.5 * std::sin (lfoPhase * 0.73))));
-            const auto chorusTap = tap (chorusMod);
+            const auto chorusMod = static_cast<std::size_t> (
+                sampleRate *
+                (0.018 + 0.005 * (0.5 + 0.5 * std::sin (lfoPhase * twoPi * 0.73))));
+            const auto chorusTap = tap (std::max<std::size_t> (1, chorusMod));
             effectBuffer[effectWriteIndex] = std::clamp (
                 mixed + delayTap * static_cast<float> (smoothedDelayMix * 0.42) +
                     (reverbA + reverbB) *
@@ -152,10 +236,114 @@ tresult PLUGIN_API Processor::process (ProcessData& data)
             left += chorusTap * static_cast<float> (smoothedChorusMix * 0.34);
             right -= chorusTap * static_cast<float> (smoothedChorusMix * 0.28);
         }
-        output[0][sample] = std::clamp (left, -1.0f, 1.0f);
-        output[1][sample] = std::clamp (right, -1.0f, 1.0f);
+        output[0][sample] = std::tanh (left * 1.15f) * 0.86f;
+        output[1][sample] = std::tanh (right * 1.15f) * 0.86f;
     }
     return kResultOk;
+}
+
+float Processor::renderVoice (Voice& voice, double sampleRate)
+{
+    const auto& preset = voice.preset;
+    switch (voice.stage)
+    {
+        case EnvelopeStage::attack:
+        {
+            const auto attack = std::max (preset.attackMs, minimumEnvelopeTimeMs);
+            voice.envelope += static_cast<float> (1000.0 / (attack * sampleRate));
+            if (voice.envelope >= 1.0f)
+            {
+                voice.envelope = 1.0f;
+                voice.stage = EnvelopeStage::decay;
+            }
+            break;
+        }
+        case EnvelopeStage::decay:
+        {
+            const auto decay = std::max (preset.decayMs, minimumEnvelopeTimeMs);
+            voice.envelope -= static_cast<float> (
+                (1.0 - preset.sustain) * 1000.0 / (decay * sampleRate));
+            if (voice.envelope <= preset.sustain)
+            {
+                voice.envelope = preset.sustain;
+                voice.stage = EnvelopeStage::sustain;
+            }
+            break;
+        }
+        case EnvelopeStage::sustain: voice.envelope = preset.sustain; break;
+        case EnvelopeStage::release:
+            voice.envelope -= voice.releaseStep;
+            if (voice.envelope <= 0.0001f)
+            {
+                voice = {};
+                return 0.0f;
+            }
+            break;
+        case EnvelopeStage::off:
+            voice = {};
+            return 0.0f;
+    }
+
+    const auto gestureVibrato = static_cast<double> (vibratoDepth) * 0.5;
+    const auto vibratoSemitones =
+        (static_cast<double> (preset.vibratoDepthSemitones) + gestureVibrato) *
+        std::sin (lfoPhase * twoPi);
+    const auto baseSemitones =
+        static_cast<double> (voice.pitch) - 69.0 + vibratoSemitones;
+    const auto unisonCount = std::clamp<int> (preset.unisonVoices, 1, 3);
+    float oscillators = 0.0f;
+    for (int unison = 0; unison < unisonCount; ++unison)
+    {
+        const auto center = static_cast<double> (unisonCount - 1) * 0.5;
+        const auto detune =
+            (static_cast<double> (unison) - center) *
+            static_cast<double> (preset.detuneCents) /
+            std::max (1.0, center) / 100.0;
+        const auto frequency = 440.0 * std::pow (2.0, (baseSemitones + detune) / 12.0);
+        const auto increment = std::min (frequency / sampleRate, 0.45);
+        voice.phaseA[static_cast<std::size_t> (unison)] = wrapPhase (
+            voice.phaseA[static_cast<std::size_t> (unison)] + increment);
+        voice.phaseB[static_cast<std::size_t> (unison)] = wrapPhase (
+            voice.phaseB[static_cast<std::size_t> (unison)] + increment * 1.001);
+        const auto a = waveformSample (
+            preset.waveformA,
+            voice.phaseA[static_cast<std::size_t> (unison)],
+            increment,
+            voice.noiseState);
+        const auto b = waveformSample (
+            preset.waveformB,
+            voice.phaseB[static_cast<std::size_t> (unison)],
+            increment,
+            voice.noiseState);
+        oscillators += a * (1.0f - preset.waveformMix) + b * preset.waveformMix;
+    }
+    oscillators /= std::sqrt (static_cast<float> (unisonCount));
+    oscillators *= voice.velocity * voice.envelope;
+
+    const auto envelopeOctaves = preset.filterEnvelope * voice.envelope * 4.0f;
+    const auto brightnessOctaves =
+        static_cast<float> ((smoothedBrightness - 0.5) * 4.0);
+    const auto cutoff = std::clamp (
+        preset.filterCutoffHz * std::pow (2.0f, envelopeOctaves + brightnessOctaves),
+        25.0f,
+        static_cast<float> (sampleRate * 0.42));
+    const auto coefficient = std::clamp (
+        2.0f * std::sin (
+                   3.14159265358979323846f * cutoff / static_cast<float> (sampleRate)),
+        0.001f,
+        0.95f);
+    const auto damping = 1.95f - preset.filterResonance * 1.55f;
+    voice.filterLow += coefficient * voice.filterBand;
+    const auto high = oscillators - voice.filterLow - damping * voice.filterBand;
+    voice.filterBand += coefficient * high;
+    switch (preset.filterType)
+    {
+        case FilterType::lowpass: return voice.filterLow;
+        case FilterType::highpass: return high;
+        case FilterType::bandpass: return voice.filterBand;
+        case FilterType::notch: return voice.filterLow + high;
+    }
+    return oscillators;
 }
 
 void Processor::handleBridge ()
@@ -193,6 +381,7 @@ void Processor::handleBridge ()
                 break;
             }
             case BridgeMessageType::panic: resetVoices (); break;
+            case BridgeMessageType::programChange: applyPreset (message.data1); break;
         }
     }
 }
@@ -237,9 +426,25 @@ void Processor::updateParameters (IParameterChanges* changes)
             case kReverbMixId: reverbMix = value; break;
             case kDelayMixId: delayMix = value; break;
             case kChorusMixId: chorusMix = value; break;
+            case kSoundProgramId:
+                applyPreset (static_cast<std::uint8_t> (
+                    std::round (value * static_cast<ParamValue> (kPresetCount - 1))));
+                break;
             default: break;
         }
     }
+}
+
+void Processor::applyPreset (std::uint8_t program)
+{
+    const auto selected = presetForProgram (program);
+    if (selected.program == currentPreset.program && currentPreset.name == selected.name)
+        return;
+    resetVoices ();
+    currentPreset = selected;
+    reverbMix = currentPreset.reverbMix;
+    delayMix = currentPreset.delayMix;
+    chorusMix = currentPreset.chorusMix;
 }
 
 void Processor::noteOn (int16 pitch, float velocity)
@@ -248,12 +453,46 @@ void Processor::noteOn (int16 pitch, float velocity)
         return !candidate.active;
     });
     if (voice == voices.end ())
-        voice = voices.begin ();
+    {
+        voice = std::min_element (
+            voices.begin (),
+            voices.end (),
+            [] (const Voice& left, const Voice& right) {
+                if (left.stage == EnvelopeStage::release &&
+                    right.stage != EnvelopeStage::release)
+                    return true;
+                if (right.stage == EnvelopeStage::release &&
+                    left.stage != EnvelopeStage::release)
+                    return false;
+                if (left.envelope != right.envelope)
+                    return left.envelope < right.envelope;
+                return left.age < right.age;
+            });
+    }
+    *voice = {};
     voice->pitch = pitch;
     voice->velocity = std::clamp (velocity, 0.0f, 1.0f);
-    voice->phase = 0.0;
+    voice->phaseB.fill (0.173);
     voice->keyDown = true;
     voice->active = true;
+    voice->stage = EnvelopeStage::attack;
+    voice->preset = currentPreset;
+    voice->age = ++voiceAge;
+    voice->noiseState =
+        static_cast<std::uint32_t> (voiceAge * 747796405ULL + pitch * 2891336453ULL);
+}
+
+void Processor::beginRelease (Voice& voice)
+{
+    if (!voice.active || voice.stage == EnvelopeStage::release)
+        return;
+    const auto sampleRate = processSetup.sampleRate > 0.0 ? processSetup.sampleRate : 44100.0;
+    const auto releaseSamples = std::max (
+        1.0,
+        static_cast<double> (std::max (voice.preset.releaseMs, minimumEnvelopeTimeMs)) *
+            sampleRate / 1000.0);
+    voice.releaseStep = voice.envelope / static_cast<float> (releaseSamples);
+    voice.stage = EnvelopeStage::release;
 }
 
 void Processor::noteOff (int16 pitch)
@@ -264,7 +503,7 @@ void Processor::noteOff (int16 pitch)
         {
             voice.keyDown = false;
             if (!sustainEnabled)
-                voice.active = false;
+                beginRelease (voice);
         }
     }
 }
@@ -279,7 +518,7 @@ void Processor::setSustain (bool enabled)
         for (auto& voice : voices)
         {
             if (voice.active && !voice.keyDown)
-                voice.active = false;
+                beginRelease (voice);
         }
     }
 }
@@ -299,15 +538,26 @@ tresult PLUGIN_API Processor::setState (IBStream* state)
     if (!state)
         return kResultFalse;
     IBStreamer streamer (state, kLittleEndian);
-    return streamer.readDouble (masterGain) &&
-                   streamer.readDouble (vibratoDepth) &&
-                   streamer.readDouble (expression) &&
-                   streamer.readDouble (brightness) &&
-                   streamer.readDouble (reverbMix) &&
-                   streamer.readDouble (delayMix) &&
-                   streamer.readDouble (chorusMix)
-               ? kResultOk
-               : kResultFalse;
+    if (!streamer.readDouble (masterGain) ||
+        !streamer.readDouble (vibratoDepth) ||
+        !streamer.readDouble (expression) ||
+        !streamer.readDouble (brightness) ||
+        !streamer.readDouble (reverbMix) ||
+        !streamer.readDouble (delayMix) ||
+        !streamer.readDouble (chorusMix))
+        return kResultFalse;
+    const auto savedReverbMix = reverbMix;
+    const auto savedDelayMix = delayMix;
+    const auto savedChorusMix = chorusMix;
+    uint32 program = 0;
+    if (streamer.readInt32u (program))
+    {
+        applyPreset (static_cast<std::uint8_t> (program % kPresetCount));
+        reverbMix = savedReverbMix;
+        delayMix = savedDelayMix;
+        chorusMix = savedChorusMix;
+    }
+    return kResultOk;
 }
 
 tresult PLUGIN_API Processor::getState (IBStream* state)
@@ -321,7 +571,8 @@ tresult PLUGIN_API Processor::getState (IBStream* state)
                    streamer.writeDouble (brightness) &&
                    streamer.writeDouble (reverbMix) &&
                    streamer.writeDouble (delayMix) &&
-                   streamer.writeDouble (chorusMix)
+                   streamer.writeDouble (chorusMix) &&
+                   streamer.writeInt32u (currentPreset.program)
                ? kResultOk
                : kResultFalse;
 }

@@ -4,12 +4,16 @@
 
 - Native C++20 VST3 instrument using Steinberg VST3 SDK `v3.8.0_build_66`.
 - Valid Windows VST3 bundle with stereo output, MIDI input, and generated-MIDI output.
-- Sixteen voices with sustain, smoothed gain/expression/timbre, motion-driven vibrato, and
-  stereo reverb, delay, and chorus.
-- Seven automatable parameters with DAW state persistence.
+- Twenty-four voices with note-aware stealing, sustain and release envelopes, dual oscillators,
+  up to three rendered unison voices, multimode filtering, smoothed gain/expression/timbre,
+  motion-driven vibrato, stereo reverb, variable delay, chorus, and output limiting.
+- A shared 120-sound factory library covering keys through cinematic atmospheres.
+- Eight automatable parameters, including the 120-choice Factory Sound list, with DAW state
+  persistence.
 - Local-only direct gesture bridge; no virtual MIDI driver and no Python inside the plug-in.
 - Build and explicit Steinberg validator gate on D:.
 - Companion loop record/play/clear controls shared by MIDI, standalone, and VST bridge outputs.
+- Bridge program-change messages switch the native factory sound without restarting a session.
 
 ## Build and validate
 
@@ -69,6 +73,6 @@ broker and instance IDs without changing the audio-thread contract.
 2. Sample-accurate event offsets from bridge mailbox to audio block.
 3. Multi-instance broker and scene routing.
 4. MPE/VST3 note expression and MIDI 2.0 capability negotiation.
-5. Preset browser, mapping editor, learn mode, and per-song scene automation.
+5. Searchable/favorite preset browser, mapping editor, learn mode, and per-song scene automation.
 6. Audio/MIDI clip export, overdub, undo, count-in, metronome, and punch recording.
 7. CLAP target after the VST3 product path is stable.

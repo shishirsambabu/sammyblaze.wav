@@ -52,3 +52,13 @@ def test_runtime_emits_right_hand_expression_controls() -> None:
     assert ("cc", 11, 94) in output.messages
     assert ("cc", 1, 0) in output.messages
     assert ("cc", 74, 64) in output.messages
+
+
+def test_runtime_selects_factory_sound_and_reports_it() -> None:
+    runtime, output = default_runtime()
+
+    runtime.select_sound(83)
+
+    assert runtime.sound_program == 83
+    assert ("program", 83, None) in output.messages
+    assert "Sound: Infinite Bloom Pad" in runtime.status_label

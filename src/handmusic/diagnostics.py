@@ -16,6 +16,8 @@ _DISTRIBUTIONS = {
     "python-rtmidi": "python-rtmidi",
     "opencv-python": "opencv-python",
     "mediapipe": "mediapipe",
+    "sounddevice": "sounddevice",
+    "PySide6": "PySide6",
     "scikit-learn": "scikit-learn",
 }
 

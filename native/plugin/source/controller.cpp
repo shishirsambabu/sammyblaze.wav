@@ -2,6 +2,9 @@
 
 #include "base/source/fstreamer.h"
 #include "ids.h"
+#include "pluginterfaces/base/ustring.h"
+#include "presets.h"
+#include "public.sdk/source/vst/vstparameters.h"
 
 namespace Steinberg::Vst::SammyBlaze {
 
@@ -21,11 +24,25 @@ tresult PLUGIN_API Controller::initialize (FUnknown* context)
     parameters.addParameter (
         STR16 ("Brightness"), STR16 ("%"), 0, 0.5, ParameterInfo::kCanAutomate, kBrightnessId);
     parameters.addParameter (
-        STR16 ("Reverb Mix"), STR16 ("%"), 0, 0.15, ParameterInfo::kCanAutomate, kReverbMixId);
+        STR16 ("Reverb Mix"), STR16 ("%"), 0, 0.05, ParameterInfo::kCanAutomate, kReverbMixId);
     parameters.addParameter (
-        STR16 ("Delay Mix"), STR16 ("%"), 0, 0.12, ParameterInfo::kCanAutomate, kDelayMixId);
+        STR16 ("Delay Mix"), STR16 ("%"), 0, 0.05, ParameterInfo::kCanAutomate, kDelayMixId);
     parameters.addParameter (
-        STR16 ("Chorus Mix"), STR16 ("%"), 0, 0.08, ParameterInfo::kCanAutomate, kChorusMixId);
+        STR16 ("Chorus Mix"), STR16 ("%"), 0, 0.20, ParameterInfo::kCanAutomate, kChorusMixId);
+
+    auto* sound = new StringListParameter (
+        STR16 ("Factory Sound"),
+        kSoundProgramId,
+        nullptr,
+        ParameterInfo::kCanAutomate | ParameterInfo::kIsList |
+            ParameterInfo::kIsProgramChange);
+    for (std::size_t program = 0; program < kPresetCount; ++program)
+    {
+        String128 label {};
+        UString (label, 128).fromAscii (presetName (program));
+        sound->appendString (label);
+    }
+    parameters.addParameter (sound);
     return kResultOk;
 }
 
@@ -56,6 +73,14 @@ tresult PLUGIN_API Controller::setComponentState (IBStream* state)
     if (!streamer.readDouble (value))
         return kResultFalse;
     setParamNormalized (kChorusMixId, value);
+    uint32 program = 0;
+    if (streamer.readInt32u (program))
+    {
+        setParamNormalized (
+            kSoundProgramId,
+            static_cast<ParamValue> (program % kPresetCount) /
+                static_cast<ParamValue> (kPresetCount - 1));
+    }
     return kResultOk;
 }
 

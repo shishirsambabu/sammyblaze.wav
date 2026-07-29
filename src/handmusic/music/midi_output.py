@@ -13,6 +13,7 @@ _NOTE_ON = 1
 _NOTE_OFF = 2
 _CONTROL_CHANGE = 3
 _PANIC = 4
+_PROGRAM_CHANGE = 5
 
 
 def bridge_packet(
@@ -55,6 +56,9 @@ class MemoryMidiOutput:
     def control_change(self, control: int, value: int) -> None:
         self.messages.append(("cc", control, value))
 
+    def program_change(self, program: int) -> None:
+        self.messages.append(("program", program, None))
+
 
 class MidoOutput:
     """Optional real MIDI adapter. Importing this module does not require Mido."""
@@ -83,6 +87,12 @@ class MidoOutput:
     def control_change(self, control: int, value: int) -> None:
         self._port.send(self._mido.Message("control_change", control=control, value=value))
 
+    def program_change(self, program: int) -> None:
+        from handmusic.music.presets import get_preset
+
+        midi_program = get_preset(program).midi_program
+        self._port.send(self._mido.Message("program_change", program=midi_program))
+
     def close(self) -> None:
         self._port.close()
 
@@ -110,6 +120,9 @@ class PluginBridgeOutput:
 
     def control_change(self, control: int, value: int) -> None:
         self._send(_CONTROL_CHANGE, control, value)
+
+    def program_change(self, program: int) -> None:
+        self._send(_PROGRAM_CHANGE, program, 0)
 
     def close(self) -> None:
         if self._closed:

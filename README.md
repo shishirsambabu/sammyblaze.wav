@@ -3,7 +3,8 @@
 SammyBlaze.wav is a local-first, hand-controlled performance instrument. A webcam sees
 expressive hand movement; a deterministic musical runtime turns it into harmony, melody,
 continuous expression, and loops; sound can come from MIDI, a local SoundFont, or the native
-SammyBlaze VST3 loaded in a DAW.
+SammyBlaze VST3 loaded in a DAW. The desktop app also includes a direct 120-sound synthesizer,
+so a DAW is not required to perform.
 
 The product is intentionally split into four replaceable layers:
 
@@ -27,6 +28,8 @@ The current performer milestone is a two-hand keyboardist engine:
   timbre, and effect sends in real time.
 - Sustain is independent of chord latching. Loop recording captures notes and expression,
   then plays them while live notes remain independently owned.
+- The factory library provides 120 distinct keys, basses, leads, plucks, bells, polysynths,
+  pads, atmospheres, motion textures, and cinematic sounds. Sound changes work while performing.
 
 The style selector provides pop, anthem, minor-drive, jazz ii-V-I, blues, cinematic, and
 neo-soul chord banks. The lead engine chooses quality-aware scales including Ionian, Lydian,
@@ -65,8 +68,8 @@ python -m handmusic --ui
 For camera/MIDI development, install the optional runtime extras:
 
 ```powershell
-python -m pip install -e ".[vision,midi,audio,ui]"
-python -m handmusic --camera 0 --output midi
+python -m pip install -e ".[vision,midi-native,synth,ui]"
+python -m handmusic --camera 0 --output synth
 ```
 
 The `midi` extra provides the pure-Python Mido API. The `midi-native` extra includes both Mido and the RtMidi hardware backend, so use it when you have a native MIDI toolchain.
@@ -77,15 +80,26 @@ If the machine does not have a compiled RtMidi backend yet, use camera-only diag
 python -m handmusic --camera 0 --output null
 ```
 
-The first launch should be done with `--dry-run` or a null output. Hardware adapters are optional so the core can be tested on every machine and in CI. For standalone audio, pass `--output standalone --soundfont path/to/file.sf2`.
+The first launch can use the built-in instrument with no SoundFont or DAW:
+
+```powershell
+D:\Python312\python.exe -m handmusic --ui
+```
+
+Choose **Built-in synth (120 sounds)**, camera `0`, a sound category, and a factory sound, then
+click **Start performer**. On Windows the camera layer tries DirectShow, Media Foundation, and
+automatic OpenCV backends, verifies an actual frame before starting, and falls back to camera
+`0` when a stale nonzero index is selected. For external SoundFont audio, pass
+`--output standalone --soundfont path/to/file.sf2`.
 
 When reporting a machine-specific issue, run `python -m handmusic --diagnostics` from the project environment and attach the text output. The command does not open the camera, MIDI port, or synthesizer.
 
 Camera sessions print frame age, dropped-frame, and gesture-latency telemetry on exit. Add `--telemetry-json path/to/session-telemetry.json` to save the bounded report for later review.
 
 The optional `--ui` command opens the desktop performer control surface. It provides camera,
-MIDI/VST3 routing, chord-bank and starting lead-mode selection, camera and 3D expression
-canvases, record/play/clear loop controls, sustain, panic, live voicing state, and telemetry.
+built-in/MIDI/VST3 routing, a live 120-sound browser, chord-bank and starting lead-mode
+selection, camera and 3D expression canvases, record/play/clear loop controls, sustain, panic,
+live voicing state, and telemetry.
 Install the UI extra first with `python -m pip install -e ".[ui]"`.
 
 For a specific playable setup:
@@ -94,12 +108,35 @@ For a specific playable setup:
 python -m handmusic --camera 0 --output midi --progression blues --scale blues
 ```
 
+## Factory sound library
+
+The shared catalog in `src/handmusic/music/presets.py` contains 120 stable programs:
+
+| Programs | Category |
+|---:|---|
+| 0-11 | Keys |
+| 12-23 | Basses |
+| 24-35 | Leads |
+| 36-47 | Plucks |
+| 48-59 | Bells |
+| 60-71 | Polysynths |
+| 72-83 | Pads |
+| 84-95 | Atmospheres |
+| 96-107 | Motion textures |
+| 108-119 | Cinematic |
+
+Each program carries dual oscillator types, oscillator mix, ADSR, multimode filter, resonance,
+filter envelope, unison/detune, vibrato, reverb, delay, delay time, and chorus. The Python
+built-in engine and native VST3 render these parameters directly. Standard MIDI outputs receive
+the nearest General MIDI program for compatibility.
+
 ## FL Studio / VST3
 
 The repository includes a native C++20 VST3 instrument built directly against Steinberg's
 MIT-licensed VST3 SDK. It accepts ordinary host MIDI and the direct SammyBlaze localhost bridge,
-then synthesizes stereo audio with automatable gain, vibrato, expression, brightness, reverb,
-delay, and chorus.
+then synthesizes stereo audio with 24-voice polyphony, dual oscillators, ADSR envelopes,
+multimode filters, unison, a 120-sound DAW parameter, and automatable gain, vibrato, expression,
+brightness, reverb, delay, and chorus.
 
 Build and run Steinberg's validator:
 
