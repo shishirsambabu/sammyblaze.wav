@@ -4,6 +4,7 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Configuration = "Release",
     [string]$BuildDirectory = "D:\SammyBlazeBuild\native",
+    [string]$ValidatorBuildDirectory = "",
     [string]$CMakePath = "D:\VisualStudio\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
     [string]$NinjaPath = "D:\VisualStudio\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe",
     [string]$VcVarsPath = "D:\VisualStudio\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
@@ -87,8 +88,44 @@ function Invoke-NativeCommand {
     }
 }
 
+function Assert-NoDynamicMsvcRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$BinaryPath,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $dumpbin = Get-Command "dumpbin.exe" -CommandType Application -ErrorAction SilentlyContinue
+    if ($null -eq $dumpbin) {
+        throw "Visual Studio dumpbin.exe is required to verify $Description dependencies."
+    }
+    $dependencyOutput = @(& $dumpbin.Source /dependents $BinaryPath 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect $Description dependencies: $BinaryPath"
+    }
+    $forbidden = @(
+        $dependencyOutput |
+            Where-Object {
+                $_ -match "(?i)\b(?:MSVCP|VCRUNTIME)[0-9A-Z_.-]*\.dll\b"
+            } |
+            ForEach-Object { $_.Trim() }
+    )
+    if ($forbidden.Count -gt 0) {
+        throw (
+            "$Description depends on a separately installed MSVC runtime: " +
+            ($forbidden -join ", ")
+        )
+    }
+    Write-Host "Static MSVC runtime dependency gate: PASS ($Description)"
+}
+
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $resolvedBuildDirectory = Resolve-AbsolutePath -Path $BuildDirectory -BasePath $repoRoot
+$resolvedValidatorBuildDirectory = if ([string]::IsNullOrWhiteSpace($ValidatorBuildDirectory)) {
+    "$resolvedBuildDirectory-validator-dynamic"
+}
+else {
+    Resolve-AbsolutePath -Path $ValidatorBuildDirectory -BasePath $repoRoot
+}
 $resolvedVst3SdkRoot = Resolve-AbsolutePath -Path $Vst3SdkRoot -BasePath $repoRoot
 
 if ([string]::IsNullOrWhiteSpace($AudioCoreDllPath)) {
@@ -142,6 +179,21 @@ $vst3BuildArguments = @(
     "--config", $Configuration,
     "--target", $Vst3Target
 )
+$validatorConfigureArguments = @(
+    "--fresh",
+    "-S", $repoRoot,
+    "-B", $resolvedValidatorBuildDirectory,
+    "-G", "Ninja Multi-Config",
+    "-DCMAKE_CONFIGURATION_TYPES=$Configuration",
+    "-DCMAKE_MAKE_PROGRAM=$resolvedNinja",
+    "-DVST3_SDK_ROOT=$resolvedVst3SdkRoot",
+    "-DSAMMYBLAZE_STATIC_MSVC_RUNTIME=OFF"
+)
+$validatorBuildArguments = @(
+    "--build", $resolvedValidatorBuildDirectory,
+    "--config", $Configuration,
+    "--target", "validator"
+)
 
 if ($DryRun) {
     Write-Host "DRY RUN: native target and artifact contract"
@@ -183,6 +235,7 @@ Invoke-NativeCommand `
 if ($DryRun) {
     if ($Validate) {
         Write-Host "DRY RUN: build and execute shared-core, C ABI, DSP, benchmark, and Steinberg validation."
+        Write-Host "DRY RUN: dynamic-runtime validator tools: $resolvedValidatorBuildDirectory"
     }
     return
 }
@@ -196,6 +249,13 @@ if (-not (Test-Path -LiteralPath $resolvedVst3BundlePath -PathType Container)) {
 if (-not (Test-Path -LiteralPath $vst3Binary -PathType Leaf)) {
     throw "Native VST3 bundle is incomplete; binary is missing: $vst3Binary"
 }
+
+Assert-NoDynamicMsvcRuntime `
+    -BinaryPath $resolvedAudioCoreDllPath `
+    -Description "standalone audio core"
+Assert-NoDynamicMsvcRuntime `
+    -BinaryPath $vst3Binary `
+    -Description "VST3 binary"
 
 if ($Validate) {
     Invoke-NativeCommand `
@@ -225,7 +285,6 @@ if ($Validate) {
     $env:PATH = "$(Split-Path -Parent $resolvedAudioCoreDllPath);$env:PATH"
     foreach ($validationExecutable in @(
         $audioCoreValidator,
-        $audioCoreAbiValidator,
         $sampleTimelineValidator
     )) {
         if (-not (Test-Path -LiteralPath $validationExecutable -PathType Leaf)) {
@@ -235,6 +294,9 @@ if ($Validate) {
         if ($LASTEXITCODE -ne 0) {
             throw "Shared audio-core validation failed with exit code $LASTEXITCODE."
         }
+    }
+    if (-not (Test-Path -LiteralPath $audioCoreAbiValidator -PathType Leaf)) {
+        throw "C ABI validator build artifact is missing: $audioCoreAbiValidator"
     }
 
     $abiRuntimeValidation = Join-Path `
@@ -254,14 +316,16 @@ if ($Validate) {
 
     Invoke-NativeCommand `
         -Executable $resolvedCMake `
-        -Arguments @(
-            "--build", $resolvedBuildDirectory,
-            "--config", $Configuration,
-            "--target", "validator"
-        ) `
-        -FailureMessage "Steinberg validator build failed."
+        -Arguments $validatorConfigureArguments `
+        -FailureMessage "Dynamic-runtime Steinberg validator configure failed."
+    Invoke-NativeCommand `
+        -Executable $resolvedCMake `
+        -Arguments $validatorBuildArguments `
+        -FailureMessage "Dynamic-runtime Steinberg validator build failed."
 
-    $validator = Join-Path $resolvedBuildDirectory "bin\$Configuration\validator.exe"
+    $validator = Join-Path `
+        $resolvedValidatorBuildDirectory `
+        "bin\$Configuration\validator.exe"
     if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
         throw "Steinberg validator executable is missing: $validator"
     }
