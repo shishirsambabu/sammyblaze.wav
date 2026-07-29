@@ -10,8 +10,11 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication
 
+import handmusic.ui.desktop as desktop_module
+from handmusic.app import default_runtime
+from handmusic.music.presets import get_preset
 from handmusic.music.user_presets import load_user_preset
-from handmusic.ui.desktop import PerformerWindow
+from handmusic.ui.desktop import PerformerWindow, SessionWorker
 
 
 @pytest.fixture(scope="module")
@@ -61,3 +64,106 @@ def test_sound_lab_edits_and_saves_complete_user_preset(
     assert window.user_presets.findData("Stage Atmosphere") > 0
 
     window.close()
+
+
+def test_performance_state_updates_arm_and_sustain_controls(
+    application: QApplication,
+    tmp_path,
+) -> None:
+    window = PerformerWindow(preset_directory=tmp_path)
+
+    window._set_performance_state(
+        "ARMED | Mode: chord + scale | Chord latch: active | Pedal: on"
+    )
+    application.processEvents()
+
+    assert window.arm_badge.text() == "ARMED"
+    assert window.pedal_button.isChecked() is True
+
+    window._set_performance_state(
+        "DISARMED | Mode: chord + scale | Chord latch: ready | Pedal: off"
+    )
+    application.processEvents()
+
+    assert window.arm_badge.text() == "DISARMED"
+    assert window.pedal_button.isChecked() is False
+    window.close()
+
+
+def test_worker_reports_running_only_after_first_camera_frame(
+    application: QApplication,
+) -> None:
+    worker = SessionWorker(camera_index=0, output_mode="null", midi_port=None)
+    states: list[str] = []
+    frames: list[object] = []
+    worker.state_changed.connect(states.append)
+    worker.frame_ready.connect(frames.append)
+    frame = object()
+
+    worker._publish_frame(frame)
+    worker._publish_frame(frame)
+    application.processEvents()
+
+    assert states == ["Running"]
+    assert frames == [frame, frame]
+
+
+def test_audio_callback_failure_is_visible_on_perform_page(
+    application: QApplication,
+    tmp_path,
+) -> None:
+    window = PerformerWindow(preset_directory=tmp_path)
+
+    window._set_audio_health("Audio callback status: output underflow")
+    application.processEvents()
+
+    assert window.metric_audio.value_text == "AUDIO XRUN"
+    assert window.metric_audio.toolTip() == "Audio callback status: output underflow"
+    assert "underflow" in window.status.text()
+    window.close()
+
+
+def test_worker_marshals_live_controls_onto_runtime_thread(
+    application: QApplication,
+) -> None:
+    worker = SessionWorker(camera_index=0, output_mode="null", midi_port=None)
+    runtime, output = default_runtime()
+    worker.runtime = runtime
+    worker.output_target = output
+
+    worker.toggle_sustain()
+
+    assert runtime.notes.sustain_enabled is False
+    worker._drain_runtime_commands()
+    application.processEvents()
+    assert runtime.notes.sustain_enabled is True
+
+    worker.select_sound(83)
+    worker.apply_sound_patch(get_preset(83), master_gain=0.6, brightness=0.7)
+    assert runtime.sound_program == 0
+    worker._drain_runtime_commands()
+    assert runtime.sound_program == 83
+    assert ("program", 83, None) in output.messages
+
+
+def test_worker_treats_camera_open_cancellation_as_clean_stop(
+    application: QApplication,
+    monkeypatch,
+) -> None:
+    worker = SessionWorker(camera_index=0, output_mode="null", midi_port=None)
+    failures: list[str] = []
+    states: list[str] = []
+    worker.failed.connect(failures.append)
+    worker.state_changed.connect(states.append)
+
+    def cancelled_run_camera(*_args, **_kwargs) -> None:
+        worker.stop_event.set()
+        raise RuntimeError("Camera 0 open cancelled")
+
+    monkeypatch.setattr(desktop_module, "run_camera", cancelled_run_camera)
+
+    worker.run()
+    application.processEvents()
+
+    assert failures == []
+    assert states[-1] == "Stopped"

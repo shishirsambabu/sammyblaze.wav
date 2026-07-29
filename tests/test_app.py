@@ -62,3 +62,16 @@ def test_runtime_selects_factory_sound_and_reports_it() -> None:
     assert runtime.sound_program == 83
     assert ("program", 83, None) in output.messages
     assert "Sound: Infinite Bloom Pad" in runtime.status_label
+
+
+def test_runtime_status_exposes_arm_and_pedal_state() -> None:
+    runtime, _output = default_runtime()
+
+    assert runtime.status_label.startswith("DISARMED")
+    assert "Pedal: off" in runtime.status_label
+
+    runtime.armed = True
+    runtime.notes.set_sustain(True)
+
+    assert runtime.status_label.startswith("ARMED")
+    assert "Pedal: on" in runtime.status_label

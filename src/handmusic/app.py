@@ -90,6 +90,7 @@ class InstrumentRuntime:
 
     @property
     def status_label(self) -> str:
+        armed = "ARMED" if self.armed else "DISARMED"
         pedal = "on" if self.notes.sustain_enabled else "off"
         latch = "active" if self.last_chord_notes else "ready"
         chord_notes = " ".join(midi_note_name(note) for note in self.last_chord_notes) or "—"
@@ -97,7 +98,7 @@ class InstrumentRuntime:
             midi_note_name(self.last_scale_note) if self.last_scale_note is not None else "—"
         )
         return (
-            f"Mode: {self.mode.value} | Chord latch: {latch} | Pedal: {pedal} | "
+            f"{armed} | Mode: {self.mode.value} | Chord latch: {latch} | Pedal: {pedal} | "
             f"Chord: {chord_notes} | Melody: {melody_note} | "
             f"Lead: {self.scale.label} ({self.scale.mode.value}) | "
             f"Sound: {get_preset(self.sound_program).name}"
@@ -379,6 +380,9 @@ def run_camera(
     transport_callback: Callable[[TransportSnapshot], None] | None = None,
     display: bool = True,
 ) -> None:
+    if stop_event is not None and stop_event.is_set():
+        return
+
     try:
         import cv2
     except ImportError as exc:  # pragma: no cover - depends on environment
@@ -395,7 +399,9 @@ def run_camera(
     last_state_label: str | None = None
     telemetry = telemetry or PerformanceTelemetry()
     try:
-        for frame, timestamp_ms in frames(camera_index):
+        if stop_event is not None and stop_event.is_set():
+            return
+        for frame, timestamp_ms in frames(camera_index, stop_event=stop_event):
             if stop_event is not None and stop_event.is_set():
                 break
             frame_count += 1

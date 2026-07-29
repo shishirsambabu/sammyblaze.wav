@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict, replace
 from pathlib import Path
-from threading import Event
+from queue import Empty, Full, Queue
+from threading import Event, Lock
 from typing import Any
 
 from handmusic import __version__
@@ -96,6 +97,7 @@ else:
         frame_ready = Signal(object)
         camera_health = Signal(str)
         midi_health = Signal(str)
+        audio_health = Signal(str)
         performance_state = Signal(str)
         expression_updated = Signal(object)
         transport_updated = Signal(object)
@@ -126,14 +128,26 @@ else:
             self.stop_event = Event()
             self.runtime: Any | None = None
             self.output_target: Any | None = None
+            self._camera_started = False
+            self._commands: Queue[tuple[str, object | None]] = Queue(maxsize=32)
+            self._patch_lock = Lock()
+            self._pending_patch: tuple[int | None, Preset, float, float] | None = None
 
         def request_stop(self) -> None:
             self.stop_event.set()
 
         def _publish_telemetry(self, snapshot: TelemetrySnapshot) -> None:
+            self._drain_runtime_commands()
+            drain_reports = getattr(self.output_target, "drain_callback_reports", None)
+            if drain_reports is not None:
+                for report in drain_reports():
+                    self.audio_health.emit(str(report))
             self.telemetry_updated.emit(snapshot.as_dict())
 
         def _publish_frame(self, frame: object) -> None:
+            if not self._camera_started:
+                self._camera_started = True
+                self.state_changed.emit("Running")
             self.camera_health.emit("Camera: running")
             self.frame_ready.emit(frame)
 
@@ -149,38 +163,29 @@ else:
             self.transport_updated.emit(as_dict() if as_dict is not None else {})
 
         def toggle_recording(self) -> None:
-            if self.runtime is not None:
-                self._publish_transport(self.runtime.toggle_recording())
+            self._queue_command("toggle_recording")
 
         def toggle_playback(self) -> None:
-            if self.runtime is not None:
-                self._publish_transport(self.runtime.toggle_playback())
+            self._queue_command("toggle_playback")
 
         def clear_loop(self) -> None:
-            if self.runtime is not None:
-                self._publish_transport(self.runtime.clear_loop())
+            self._queue_command("clear_loop")
 
         def toggle_sustain(self) -> None:
-            if self.runtime is not None:
-                self.runtime.notes.set_sustain(not self.runtime.notes.sustain_enabled)
-                self._publish_state(self.runtime.status_label)
+            self._queue_command("toggle_sustain")
 
         def panic(self) -> None:
-            if self.runtime is not None:
-                self.runtime.stop_for_tracking_loss()
-                self._publish_state(self.runtime.status_label)
+            self._queue_command("panic")
 
         def select_sound(self, program: int) -> None:
-            self.sound_program = program
-            self.sound_patch = get_preset(program)
-            if self.runtime is not None:
-                self.runtime.select_sound(program)
-                self.apply_sound_patch(
-                    self.sound_patch,
-                    master_gain=self.master_gain,
-                    brightness=self.brightness,
+            patch = get_preset(program)
+            with self._patch_lock:
+                self._pending_patch = (
+                    program,
+                    patch,
+                    self.master_gain,
+                    self.brightness,
                 )
-                self._publish_state(self.runtime.status_label)
 
         def apply_sound_patch(
             self,
@@ -189,9 +194,26 @@ else:
             master_gain: float,
             brightness: float,
         ) -> None:
-            """Apply a complete patch snapshot without cutting active notes."""
-
+            """Queue the newest complete patch snapshot for the worker thread."""
             preset.validate()
+            with self._patch_lock:
+                pending_program = (
+                    self._pending_patch[0] if self._pending_patch is not None else None
+                )
+                self._pending_patch = (
+                    pending_program,
+                    preset,
+                    master_gain,
+                    brightness,
+                )
+
+        def _apply_sound_patch_now(
+            self,
+            preset: Preset,
+            *,
+            master_gain: float,
+            brightness: float,
+        ) -> None:
             self.sound_patch = preset
             self.master_gain = master_gain
             self.brightness = brightness
@@ -204,6 +226,51 @@ else:
                     brightness=brightness,
                 )
 
+        def _queue_command(self, command: str) -> None:
+            try:
+                self._commands.put_nowait((command, None))
+            except Full:
+                self.stop_event.set()
+                self.failed.emit(
+                    "Control queue overflow; the session was stopped to preserve note safety."
+                )
+
+        def _drain_runtime_commands(self) -> None:
+            runtime = self.runtime
+            if runtime is None:
+                return
+            with self._patch_lock:
+                pending_patch = self._pending_patch
+                self._pending_patch = None
+            if pending_patch is not None:
+                program, patch, master_gain, brightness = pending_patch
+                if program is not None:
+                    self.sound_program = program
+                    runtime.select_sound(program)
+                self._apply_sound_patch_now(
+                    patch,
+                    master_gain=master_gain,
+                    brightness=brightness,
+                )
+                self._publish_state(runtime.status_label)
+            while True:
+                try:
+                    command, _payload = self._commands.get_nowait()
+                except Empty:
+                    break
+                if command == "toggle_recording":
+                    self._publish_transport(runtime.toggle_recording())
+                elif command == "toggle_playback":
+                    self._publish_transport(runtime.toggle_playback())
+                elif command == "clear_loop":
+                    self._publish_transport(runtime.clear_loop())
+                elif command == "toggle_sustain":
+                    runtime.notes.set_sustain(not runtime.notes.sustain_enabled)
+                    self._publish_state(runtime.status_label)
+                elif command == "panic":
+                    runtime.stop_for_tracking_loss()
+                    self._publish_state(runtime.status_label)
+
         def run(self) -> None:  # pragma: no cover - requires a desktop and camera
             runtime = None
             telemetry = PerformanceTelemetry()
@@ -213,6 +280,7 @@ else:
                     self.state_changed.emit("Starting built-in audio engine...")
                     output: Any = BuiltinSynthOutput(self.sound_program)
                     self.midi_health.emit("Audio: built-in 120-sound synth")
+                    self.audio_health.emit("Built-in synth ready")
                 elif self.output_mode == "midi":
                     self.state_changed.emit("Connecting MIDI...")
                     output = MidoOutput(self.midi_port)
@@ -233,14 +301,14 @@ else:
                 )
                 self.runtime = runtime
                 runtime.select_sound(self.sound_program)
-                self.apply_sound_patch(
+                self._apply_sound_patch_now(
                     self.sound_patch,
                     master_gain=self.master_gain,
                     brightness=self.brightness,
                 )
                 self._publish_state(runtime.status_label)
-                self.state_changed.emit("Running")
-                self.camera_health.emit("Camera: opening...")
+                self.state_changed.emit("Opening camera...")
+                self.camera_health.emit(f"Camera {self.camera_index}: opening...")
                 camera_kwargs = {
                     "telemetry": telemetry,
                     "stop_event": self.stop_event,
@@ -254,6 +322,8 @@ else:
                 try:
                     run_camera(runtime, self.camera_index, **camera_kwargs)
                 except RuntimeError as exc:
+                    if self.stop_event.is_set():
+                        return
                     if self.camera_index == 0 or "Could not read camera" not in str(exc):
                         raise
                     self.camera_health.emit(
@@ -305,6 +375,7 @@ else:
             self._preset_directory = preset_directory
             self._last_frame: QImage | None = None
             self._loading_patch = False
+            self._session_running = False
             self._current_patch = get_preset(sound_program)
             self._master_gain = 0.75
             self._brightness = 0.5
@@ -601,6 +672,7 @@ else:
             self.play_button = self._transport_button("▷  PLAY LOOP", self.toggle_playback)
             self.clear_button = self._transport_button("⌫  CLEAR LOOP", self.clear_loop)
             self.pedal_button = self._transport_button("♧  SUSTAIN PEDAL", self.toggle_sustain)
+            self.pedal_button.setCheckable(True)
             self.panic_button = self._transport_button("⚠  PANIC", self.panic)
             self.panic_button.setProperty("variant", "danger")
             for button in (
@@ -1142,9 +1214,12 @@ else:
             self._update_port_enabled()
 
         def _update_port_enabled(self) -> None:
-            self.midi_port.setEnabled(self.output.currentData() == "midi")
+            self.midi_port.setEnabled(
+                self.output.currentData() == "midi" and not self._session_running
+            )
 
         def _set_controls_enabled(self, enabled: bool) -> None:
+            self._session_running = not enabled
             self.camera.setEnabled(enabled)
             self.output.setEnabled(enabled)
             self.progression.setEnabled(enabled)
@@ -1178,11 +1253,12 @@ else:
             )
             self.worker.state_changed.connect(self._set_status)
             self.worker.telemetry_updated.connect(self.update_telemetry)
-            self.worker.failed.connect(self._set_status)
+            self.worker.failed.connect(self._set_failure)
             self.worker.frame_ready.connect(self.update_frame)
             self.worker.camera_health.connect(self._set_camera_health)
             self.worker.camera_index_changed.connect(self.camera.setValue)
             self.worker.midi_health.connect(self.midi_health.setText)
+            self.worker.audio_health.connect(self._set_audio_health)
             self.worker.performance_state.connect(self._set_performance_state)
             self.worker.expression_updated.connect(self.expression_playground.update_state)
             self.worker.transport_updated.connect(self.update_transport)
@@ -1194,12 +1270,33 @@ else:
         def _set_status(self, text: str) -> None:
             self.status.setText(text)
 
+        def _set_failure(self, text: str) -> None:
+            self._set_status(text)
+            self._set_camera_health(f"Session error: {text}")
+
+        def _set_audio_health(self, text: str) -> None:
+            lowered = text.lower()
+            if "failed" in lowered or "non-finite" in lowered:
+                label = "AUDIO ERROR"
+                self._set_status(text)
+            elif "underflow" in lowered or "overflow" in lowered:
+                label = "AUDIO XRUN"
+                self._set_status(text)
+            else:
+                label = "SYNTH READY"
+            self.metric_audio.set_value(label)
+            self.metric_audio.setToolTip(text)
+
         def _set_performance_state(self, text: str) -> None:
             self.performance_state.setText(text)
             armed = text.startswith("ARMED")
             self.arm_badge.setText("ARMED" if armed else "DISARMED")
             color = COLORS.success if armed else COLORS.danger
             self.arm_badge.setStyleSheet(f"color: {color}; font-weight: 700;")
+            sustain_enabled = "Pedal: on" in text
+            self.pedal_button.blockSignals(True)
+            self.pedal_button.setChecked(sustain_enabled)
+            self.pedal_button.blockSignals(False)
 
         def _camera_health_changed(self, text: str) -> None:
             active = "running" in text.lower() or "active" in text.lower()
@@ -1303,7 +1400,13 @@ else:
         def closeEvent(self, event: object) -> None:
             self.stop_session()
             if self.worker is not None and self.worker.isRunning():
-                self.worker.wait(5000)
+                if not self.worker.wait(5000):
+                    self._set_failure(
+                        "Shutdown timed out; camera/audio cleanup is still running. "
+                        "Wait a moment and close again."
+                    )
+                    event.ignore()
+                    return
             event.accept()
 
     def launch_ui(
