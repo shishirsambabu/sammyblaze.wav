@@ -348,18 +348,15 @@ try {
         -Description "Silent uninstall"
     $cleanupDeadline = [DateTime]::UtcNow.AddSeconds(15)
     do {
-        $remainingAppFiles = if (Test-Path -LiteralPath $appRoot) {
-            @(
+        $remainingAppFiles = @(
+            if (Test-Path -LiteralPath $appRoot) {
                 Get-ChildItem `
                     -LiteralPath $appRoot `
                     -Recurse `
                     -File `
                     -ErrorAction SilentlyContinue
-            )
-        }
-        else {
-            @()
-        }
+            }
+        )
         $managedVstStillExists = Test-Path -LiteralPath (
             Join-Path $vst3Root "SammyBlaze.vst3"
         )
