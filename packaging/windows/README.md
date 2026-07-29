@@ -1,13 +1,14 @@
 # Windows release packaging
 
-The Phase 9.2 Windows pipeline produces two distinct deliverables:
+The Windows pipeline produces two distinct staged payloads:
 
 - a PyInstaller `standalone/SammyBlaze/` bundle containing
   `SammyBlazeAudioCore.dll`, the MediaPipe hand model, and the Python/Qt runtime;
 - a separately installable `VST3/SammyBlaze.vst3` bundle.
 
-It does **not** create the final installer. `stage-release.ps1` assembles the deterministic input
-tree, manifest, and checksums that a future signed installer will consume.
+`stage-release.ps1` assembles the deterministic input tree, manifest, and checksums.
+Phase 9.5 adds an Inno Setup development installer around that verified tree. Public distribution
+still requires signing, clean-machine validation, legal metadata, and release approval.
 
 ## One-command build and stage
 
@@ -112,8 +113,34 @@ SammyBlazeRelease\0.4.0\
 path, so staging the same source bytes, version, and Git revision produces identical metadata.
 The script validates all source artifacts before replacing an existing stage.
 
+## Build and test the development installer
+
+Install Inno Setup on the build workstation, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/build-installer.ps1 `
+  -StageRoot D:\SammyBlazeRelease\0.4.0-phase9.5-rc1 `
+  -ProductVersion 0.4.0-phase9.5-rc1 `
+  -InstallerFileVersion 0.4.0.0 `
+  -OutputRoot D:\SammyBlazeRelease\Installers\0.4.0-phase9.5-rc1
+```
+
+The builder re-verifies every staged payload hash before compilation and records payload and
+installer-source revisions separately. Run isolated install/repair/uninstall acceptance with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/test-installer.ps1 `
+  -InstallerPath D:\SammyBlazeRelease\Installers\0.4.0-phase9.5-rc1\SammyBlaze-Setup-0.4.0-phase9.5-rc1-windows-x64.exe `
+  -AllowMachineMutation
+```
+
+The workstation harness uses unique product-owned QA roots and refuses the real `D:\VST3`,
+Program Files, Common Files, and drive roots.
+
 ## Current distribution status
 
-These remain unsigned development artifacts. Commercial distribution still requires an
-installer authoring tool, code-signing certificate, upgrade/uninstall rules, clean-machine
-testing, antivirus reputation checks, and release approval.
+An unsigned development installer now exists and its isolated current-user install, payload,
+runtime, repair, and uninstall matrix passes. Commercial distribution still requires an
+installer-tool commercial license, code-signing certificate, public legal identity, genuine
+version-to-version upgrade/rollback tests, clean-machine testing, antivirus reputation checks,
+DAW-host acceptance, and release approval.

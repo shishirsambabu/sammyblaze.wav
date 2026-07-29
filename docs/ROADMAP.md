@@ -41,8 +41,9 @@ Exit criteria: desktop UI, installer, diagnostics, crash-safe note cleanup, perf
 
 The current implementation establishes the support-safe diagnostics command, deterministic CI
 release gate, performer QA/release runbook, idempotent shutdown cleanup, bounded live performance
-telemetry, integrated video canvas, and a desktop control surface. Signed installer packaging and
-crash-recovery proof remain the next Phase 6 slices.
+telemetry, integrated video canvas, a desktop control surface, and an offline Windows development
+installer with isolated install/repair/uninstall evidence. Production signing, clean-machine
+installer acceptance, public legal metadata, and crash-recovery proof remain Phase 6 slices.
 
 ## Phase 7 — native DAW instrument (in progress)
 
@@ -105,6 +106,14 @@ Steinberg tests, and all 296 staged checksums verified. The development-machine 
 FL Studio installation, so FL-specific scan, playback, automation, state recall, and
 multi-instance claims remain blocked until the host is installed.
 
+Phase 9.5 installer foundation is delivered. It adds a fixed-identity x64 Inno Setup project,
+strict stage-manifest and checksum verification, self-contained static-runtime product binaries,
+separate payload/installer revision evidence, and an isolated current-user acceptance harness.
+The first 98.6 MB offline setup verified all 295 installed payload files, passed installed
+dependency and physical camera/native-audio smoke, repaired a deliberately deleted DLL, and
+uninstalled its app/VST/ARP ownership while preserving an unrelated neighboring VST.
+
 Remaining Phase 9 work: run the 30-minute 128/256-frame audio matrix, physically test camera
-disconnect/reconnect exhaustion, sign Windows binaries, and complete repeated clean-machine
-hardware and FL Studio compatibility tests.
+disconnect/reconnect exhaustion, acquire production signing and installer licensing, prove
+version-to-version upgrade/rollback on clean Windows VMs, and complete FL Studio compatibility
+tests.

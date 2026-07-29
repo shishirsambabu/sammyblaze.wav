@@ -94,3 +94,23 @@ device, binary, limits, and test method. A forced camera close/reopen proves the
 not USB unplug behavior; a Steinberg pass proves VST3 contract compliance but not FL Studio
 discovery or project recall. Missing hardware or host software leaves that gate explicitly
 blocked instead of being converted into a pass.
+
+## ADR-015: the Windows installer owns exact product trees and self-contained native modules
+
+The Windows development installer consumes only a stage that independently passes its manifest
+and checksum contract. A fixed installer application ID owns one standalone tree, one exact
+`SammyBlaze.vst3` bundle, shortcuts, and installation registry metadata. Custom VST roots are
+allowed, but their parent directories and neighboring plug-ins are never installer-owned.
+User presets remain outside the installation tree and survive upgrade and uninstall.
+
+Distributed native modules statically link the MSVC runtime because the public C ABI crosses only
+plain values and caller-owned audio buffers. Release builds inspect the audio-core DLL and VST3
+imports and reject undeclared `MSVCP` or `VCRUNTIME` dependencies. Non-distributed Steinberg
+validation tools use an isolated dynamic-runtime build so workstation application-control policy
+does not change the customer payload.
+
+Inno Setup is accepted for the development installer because the current product needs one
+offline EXE, an advanced VST directory, repair, and uninstall rather than enterprise MSI
+deployment. The fixed application ID must never change. Public commercial release remains gated
+on installer-tool licensing, signing, clean-VM upgrade/rollback evidence, and legal review; a
+future MSI migration requires a separate decision and stable migration identity.
