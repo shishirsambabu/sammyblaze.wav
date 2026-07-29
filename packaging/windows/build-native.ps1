@@ -205,7 +205,8 @@ if ($Validate) {
             "--config", $Configuration,
             "--target",
             "SammyBlazeAudioCoreValidation",
-            "SammyBlazeAudioCoreAbiValidation"
+            "SammyBlazeAudioCoreAbiValidation",
+            "SammyBlazeSampleTimelineValidation"
         ) `
         -FailureMessage "Shared audio-core validation build failed."
 
@@ -218,10 +219,14 @@ if ($Validate) {
     $audioCoreAbiValidator = Join-Path `
         $audioCoreValidationDirectory `
         "SammyBlazeAudioCoreAbiValidation.exe"
+    $sampleTimelineValidator = Join-Path `
+        $resolvedBuildDirectory `
+        "native\plugin\$Configuration\SammyBlazeSampleTimelineValidation.exe"
     $env:PATH = "$(Split-Path -Parent $resolvedAudioCoreDllPath);$env:PATH"
     foreach ($validationExecutable in @(
         $audioCoreValidator,
-        $audioCoreAbiValidator
+        $audioCoreAbiValidator,
+        $sampleTimelineValidator
     )) {
         if (-not (Test-Path -LiteralPath $validationExecutable -PathType Leaf)) {
             throw "Shared audio-core validator is missing: $validationExecutable"

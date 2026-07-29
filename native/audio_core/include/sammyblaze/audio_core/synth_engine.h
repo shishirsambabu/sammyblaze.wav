@@ -90,9 +90,11 @@ private:
         std::array<double, kMaximumUnisonVoices> phaseA {};
         std::array<double, kMaximumUnisonVoices> phaseB {};
         std::array<double, kMaximumUnisonVoices> frequency {};
+        std::array<std::uint8_t, kMaximumUnisonVoices> renderedLaneIndices {};
         float velocity {0.0f};
         float envelope {0.0f};
         float releaseStep {0.0f};
+        float renderedLaneGain {1.0f};
         float filterLow {0.0f};
         float filterBand {0.0f};
         float filterDamping {1.95f};
@@ -102,6 +104,7 @@ private:
         SynthPreset preset {};
         EnvelopeStage stage {EnvelopeStage::off};
         std::uint8_t requestedUnisonVoices {1};
+        std::uint8_t renderedLaneCount {1};
         bool keyDown {false};
         bool active {false};
     };

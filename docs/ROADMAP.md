@@ -89,7 +89,12 @@ all 120 factory programs at five sample rates, verifies zero steady-state render
 passes the full 47-test Steinberg VST3 suite, and repeatedly meets the 24-voice 256-frame p95
 target of 2.67 ms with more than 2x audio-deadline headroom on the development machine.
 
-Remaining Phase 9 work: add steady-state camera-read failure recovery, make VST MIDI and
-automation sample-accurate, prove actual SoundDevice callback/xrun performance in long hardware
-soaks, sign Windows binaries, and complete repeated clean-machine hardware/DAW compatibility
-tests.
+Phase 9.3 delivers sample-accurate host note and automation scheduling, stable adaptive 1–16
+unison with optional C ABI and UI diagnostics, bounded steady-state camera-read recovery, a
+headless packaged hardware-smoke path, and an absolute release-footprint gate. It preserves ABI
+v1 compatibility: Phase 9.2 audio-core DLLs still load, while newer cores expose requested and
+effective unison quality.
+
+Remaining Phase 9 work: prove actual SoundDevice callback/xrun performance in long hardware
+soaks, physically test camera disconnect/reconnect exhaustion, sign Windows binaries, and complete
+repeated clean-machine hardware and FL Studio compatibility tests.

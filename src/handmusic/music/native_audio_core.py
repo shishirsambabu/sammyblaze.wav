@@ -95,6 +95,9 @@ class NativeAudioCallbackHealth:
     event_queue_overflows: int
     dropped_callback_reports: int
     active_voice_count: int
+    requested_unison_voices: int | None
+    rendered_unison_lanes_per_voice: int | None
+    unison_quality_limited: bool | None
     abi_version: int
     library_path: str
 
@@ -124,6 +127,9 @@ class NativeAudioCoreBindings:
     panic: Any
     active_voice_count: Any
     nonfinite_recovery_count: Any
+    requested_unison_voices: Any | None
+    rendered_unison_lanes_per_voice: Any | None
+    unison_quality_limited: Any | None
     export_names: dict[str, str]
 
 
@@ -246,6 +252,16 @@ def _resolve_symbol(library: object, suffix: str) -> tuple[Any, str]:
     )
 
 
+def _resolve_optional_symbol(library: object, suffix: str) -> tuple[Any | None, str | None]:
+    for prefix in _SYMBOL_PREFIXES:
+        name = f"{prefix}{suffix}"
+        try:
+            return getattr(library, name), name
+        except AttributeError:
+            continue
+    return None, None
+
+
 def bind_native_audio_core(library: object) -> NativeAudioCoreBindings:
     """Bind all ABI v1 functions with explicit ctypes signatures."""
 
@@ -302,6 +318,19 @@ def bind_native_audio_core(library: object) -> NativeAudioCoreBindings:
     functions["active_voice_count"].restype = uint32
     functions["nonfinite_recovery_count"].argtypes = [handle]
     functions["nonfinite_recovery_count"].restype = ctypes.c_uint64
+
+    for logical_name in (
+        "requested_unison_voices",
+        "rendered_unison_lanes_per_voice",
+        "unison_quality_limited",
+    ):
+        function, export_name = _resolve_optional_symbol(library, logical_name)
+        functions[logical_name] = function
+        if function is not None:
+            function.argtypes = [handle]
+            function.restype = uint32
+            assert export_name is not None
+            names[logical_name] = export_name
 
     bindings = NativeAudioCoreBindings(
         **functions,
@@ -430,6 +459,10 @@ class NativeAudioCoreOutput:
         self._event_queue_overflows = 0
         self._dropped_callback_reports = 0
         self._active_voice_count = 0
+        self._requested_unison_voices: int | None = None
+        self._rendered_unison_lanes_per_voice: int | None = None
+        self._unison_quality_limited: bool | None = None
+        self._last_unison_report: tuple[int, int, bool] | None = None
         self._nonfinite_recoveries = 0
         self._last_status: str | None = None
         self._last_error: str | None = None
@@ -501,6 +534,9 @@ class NativeAudioCoreOutput:
             event_queue_overflows=self._event_queue_overflows,
             dropped_callback_reports=self._dropped_callback_reports,
             active_voice_count=self._active_voice_count,
+            requested_unison_voices=self._requested_unison_voices,
+            rendered_unison_lanes_per_voice=self._rendered_unison_lanes_per_voice,
+            unison_quality_limited=self._unison_quality_limited,
             abi_version=AUDIO_CORE_ABI_VERSION,
             library_path=self.library_path,
         )
@@ -647,6 +683,7 @@ class NativeAudioCoreOutput:
                 self._api.render_interleaved(self._handle, pointer, frame_count),
             )
             self._active_voice_count = int(self._api.active_voice_count(self._handle))
+            self._update_unison_diagnostics()
             recovery_count = int(
                 self._api.nonfinite_recovery_count(self._handle)
             )
@@ -681,6 +718,36 @@ class NativeAudioCoreOutput:
                     )
                 except BaseException:
                     pass
+
+    def _update_unison_diagnostics(self) -> None:
+        requested = self._api.requested_unison_voices
+        rendered = self._api.rendered_unison_lanes_per_voice
+        limited = self._api.unison_quality_limited
+        if requested is None or rendered is None or limited is None:
+            return
+
+        self._requested_unison_voices = int(requested(self._handle))
+        self._rendered_unison_lanes_per_voice = int(rendered(self._handle))
+        self._unison_quality_limited = bool(limited(self._handle))
+        snapshot = (
+            self._requested_unison_voices,
+            self._rendered_unison_lanes_per_voice,
+            self._unison_quality_limited,
+        )
+        if snapshot == self._last_unison_report:
+            return
+        self._last_unison_report = snapshot
+        if self._unison_quality_limited:
+            self._report(
+                "Native unison quality budget active: "
+                f"requested {self._requested_unison_voices}, rendering "
+                f"{self._rendered_unison_lanes_per_voice} lanes/voice"
+            )
+        else:
+            self._report(
+                "Native unison full quality: "
+                f"{self._rendered_unison_lanes_per_voice} lanes/voice"
+            )
 
     def _dispatch_event(self, event: tuple[str, object, object | None]) -> None:
         kind, data1, data2 = event

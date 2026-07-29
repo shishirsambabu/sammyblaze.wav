@@ -134,6 +134,17 @@ def test_audio_backend_is_visible_on_perform_page(
     assert window.metric_audio.value_text == "NATIVE CORE"
 
     window._set_audio_health(
+        "Native unison quality budget active: requested 16, rendering 4 lanes/voice"
+    )
+    application.processEvents()
+    assert window.metric_audio.value_text == "UNISON ECO"
+    assert "rendering 4 lanes/voice" in window.metric_audio.toolTip()
+
+    window._set_audio_health("Native unison full quality: 16 lanes/voice")
+    application.processEvents()
+    assert window.metric_audio.value_text == "NATIVE CORE"
+
+    window._set_audio_health(
         "Native C++ audio core unavailable; Python compatibility synth is active"
     )
     application.processEvents()

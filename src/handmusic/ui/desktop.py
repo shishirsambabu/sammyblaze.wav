@@ -1291,6 +1291,10 @@ else:
             elif "compatibility synth" in lowered:
                 label = "PYTHON FALLBACK"
                 self._set_status(text)
+            elif "unison quality budget" in lowered:
+                label = "UNISON ECO"
+            elif "unison full quality" in lowered:
+                label = "NATIVE CORE"
             elif "native c++ audio core" in lowered:
                 label = "NATIVE CORE"
             else:

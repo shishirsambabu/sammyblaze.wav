@@ -65,3 +65,22 @@ SoundDevice callback delivers bounded commands and asks that engine for interlea
 audio. The VST processor schedules host and bridge commands into the same engine implementation.
 This removes duplicated oscillator/filter/effect behavior and makes one DSP validation matrix
 apply to both products without embedding Python in the plug-in.
+
+## ADR-012: host events use a fixed sample timeline and unison degradation is observable
+
+The VST processor merges host note events and parameter points into fixed-capacity cursor arrays,
+then segments each process block at exact sample offsets without allocating or locking. Companion
+bridge commands remain block-start events until the bridge protocol carries timestamps. The
+shared engine honors the requested 1–16 unison setting and preserves a fixed oscillator budget by
+selecting a stable, evenly spaced lane subset under high polyphony. Requested lanes, rendered
+lanes per voice, and quality-limited state are exported through optional ABI v1 diagnostics so an
+older core still loads and a performer can see when the real-time quality budget is active.
+
+## ADR-013: steady-state camera failure has bounded recovery and a terminal signal
+
+Successful camera open does not imply that later reads will remain healthy. Transient read
+failures receive a small bounded retry allowance; persistent failure releases the owned capture
+and performs a bounded number of reopen attempts inside one recovery deadline. Capture ownership
+is serialized and released exactly once across stop, close, cancellation, and late-worker races.
+When recovery is exhausted, the frame iterator raises a terminal recovery error so the desktop
+cannot remain indefinitely in a false running state.

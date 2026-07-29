@@ -527,6 +527,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="exit after this many frames (useful for a hardware smoke test)",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="process camera frames without opening an OpenCV preview window",
+    )
     parser.add_argument("--preset", default=None, help="load a performer preset JSON")
     parser.add_argument(
         "--calibrate",
@@ -641,6 +646,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_frames=args.max_frames,
                 hand_model=args.hand_model,
                 telemetry=telemetry,
+                display=not args.headless,
             )
             return 0
     finally:

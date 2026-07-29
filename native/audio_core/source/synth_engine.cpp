@@ -609,23 +609,12 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
             return 0.0f;
     }
 
-    const auto unisonCount =
-        static_cast<int> (voice.requestedUnisonVoices);
-    const auto renderedLanes = std::min (
-        unisonCount,
-        static_cast<int> (renderedUnisonLanesPerVoice_));
+    const auto renderedLanes = static_cast<int> (voice.renderedLaneCount);
     float oscillators = 0.0f;
     for (int lane = 0; lane < renderedLanes; ++lane)
     {
-        const auto unison =
-            renderedLanes == unisonCount
-                ? lane
-                : renderedLanes == 1
-                      ? (unisonCount - 1) / 2
-                      : (lane * (unisonCount - 1) +
-                         (renderedLanes - 1) / 2) /
-                            (renderedLanes - 1);
-        const auto index = static_cast<std::size_t> (unison);
+        const auto index = static_cast<std::size_t> (
+            voice.renderedLaneIndices[static_cast<std::size_t> (lane)]);
         const auto frequency = voice.frequency[index] * vibratoRatio;
         const auto increment = std::min (frequency / sampleRate_, 0.45);
         voice.phaseA[index] =
@@ -648,10 +637,8 @@ float SynthEngine::renderVoice (Voice& voice, double vibratoRatio) noexcept
                        b * preset.waveformMix;
     }
     oscillatorWorkCount_ += static_cast<std::uint64_t> (renderedLanes);
-    const auto laneGain =
-        1.0f / std::sqrt (static_cast<float> (renderedLanes));
     oscillators *=
-        laneGain *
+        voice.renderedLaneGain *
         voice.velocity * voice.envelope;
 
     const auto cutoffOctaves =
@@ -821,6 +808,36 @@ bool SynthEngine::renderBlock (
         std::min<std::size_t> (requested, budgetedLanes));
     unisonQualityLimited_ =
         renderedUnisonLanesPerVoice_ < requested;
+    for (auto& voice : voices_)
+    {
+        if (!voice.active)
+            continue;
+        const auto voiceRequested = static_cast<int> (
+            std::clamp<std::size_t> (
+                voice.requestedUnisonVoices,
+                1,
+                kMaximumUnisonVoices));
+        const auto renderedLanes = std::min (
+            voiceRequested,
+            static_cast<int> (renderedUnisonLanesPerVoice_));
+        voice.renderedLaneCount =
+            static_cast<std::uint8_t> (renderedLanes);
+        voice.renderedLaneGain =
+            1.0f / std::sqrt (static_cast<float> (renderedLanes));
+        for (int lane = 0; lane < renderedLanes; ++lane)
+        {
+            const auto unison =
+                renderedLanes == voiceRequested
+                    ? lane
+                    : renderedLanes == 1
+                          ? (voiceRequested - 1) / 2
+                          : (lane * (voiceRequested - 1) +
+                             (renderedLanes - 1) / 2) /
+                                (renderedLanes - 1);
+            voice.renderedLaneIndices[static_cast<std::size_t> (lane)] =
+                static_cast<std::uint8_t> (unison);
+        }
+    }
     const auto requestedDelay = static_cast<std::size_t> (
         sampleRate_ * static_cast<double> (currentPreset_.delayTimeMs) /
         1000.0);

@@ -40,6 +40,9 @@ class _FakeNativeState:
     render_value: float = 0.25
     render_error: BaseException | None = None
     patches: list[SammyBlazeAudioPatchV1] = field(default_factory=list)
+    requested_unison_voices: int = 16
+    rendered_unison_lanes_per_voice: int = 16
+    unison_quality_limited: bool = False
 
 
 def _fake_library(
@@ -47,6 +50,7 @@ def _fake_library(
     *,
     prefix: str = "sbw_audio_core_",
     abi_version: int = AUDIO_CORE_ABI_VERSION,
+    include_unison_diagnostics: bool = False,
 ) -> object:
     class Library:
         pass
@@ -121,6 +125,22 @@ def _fake_library(
         f"{prefix}nonfinite_recovery_count",
         _FakeFunction(lambda _handle: state.recoveries),
     )
+    if include_unison_diagnostics:
+        setattr(
+            library,
+            f"{prefix}requested_unison_voices",
+            _FakeFunction(lambda _handle: state.requested_unison_voices),
+        )
+        setattr(
+            library,
+            f"{prefix}rendered_unison_lanes_per_voice",
+            _FakeFunction(lambda _handle: state.rendered_unison_lanes_per_voice),
+        )
+        setattr(
+            library,
+            f"{prefix}unison_quality_limited",
+            _FakeFunction(lambda _handle: int(state.unison_quality_limited)),
+        )
     return library
 
 
@@ -260,6 +280,9 @@ def test_phase9_2_binder_sets_exact_ctypes_prototypes_and_accepts_alias_prefix()
     assert api.render_interleaved.restype is ctypes.c_int32
     assert api.panic.restype is ctypes.c_int32
     assert api.nonfinite_recovery_count.restype is ctypes.c_uint64
+    assert api.requested_unison_voices is None
+    assert api.rendered_unison_lanes_per_voice is None
+    assert api.unison_quality_limited is None
 
 
 def test_phase9_2_binder_rejects_mismatched_abi() -> None:
@@ -334,6 +357,43 @@ def test_phase9_2_callback_reports_status_and_native_recoveries() -> None:
     assert output.drain_callback_reports() == (
         "Audio callback status: output underflow",
         "Native audio recovered from 3 new non-finite DSP event(s)",
+    )
+    output.close()
+
+
+def test_phase9_3_optional_unison_diagnostics_are_observable_and_deduplicated() -> None:
+    state = _FakeNativeState(
+        requested_unison_voices=16,
+        rendered_unison_lanes_per_voice=4,
+        unison_quality_limited=True,
+    )
+    library = _fake_library(state, include_unison_diagnostics=True)
+    sounddevice = _FakeSoundDevice()
+    output = NativeAudioCoreOutput(
+        library=library,
+        sounddevice_module=sounddevice,
+        block_size=64,
+    )
+    block = np.empty((64, 2), dtype=np.float32)
+
+    output._callback(block, 64, None, None)
+    output._callback(block, 64, None, None)
+
+    health = output.callback_health
+    assert health.requested_unison_voices == 16
+    assert health.rendered_unison_lanes_per_voice == 4
+    assert health.unison_quality_limited is True
+    assert output.drain_callback_reports() == (
+        "Native unison quality budget active: requested 16, rendering "
+        "4 lanes/voice",
+    )
+
+    state.rendered_unison_lanes_per_voice = 16
+    state.unison_quality_limited = False
+    output._callback(block, 64, None, None)
+    assert output.callback_health.unison_quality_limited is False
+    assert output.drain_callback_reports() == (
+        "Native unison full quality: 16 lanes/voice",
     )
     output.close()
 
