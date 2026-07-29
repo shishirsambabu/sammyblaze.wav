@@ -12,7 +12,7 @@ def _run_probe(result_path: Path) -> None:
     try:
         import cv2
         import mediapipe
-        import mido.backends.rtmidi
+        import mido.backends.rtmidi as midi_backend
         import rtmidi
         import sounddevice
         from PySide6.QtWidgets import QApplication
@@ -40,6 +40,7 @@ def _run_probe(result_path: Path) -> None:
                 "mediapipe": mediapipe.__version__,
                 "sounddevice": sounddevice.__version__,
                 "midi": rtmidi.__version__,
+                "midoBackend": midi_backend.__name__,
                 "nativeAudioAbi": int(bindings.abi_version()),
             }
         )
